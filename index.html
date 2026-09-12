@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>학습 시간표</title>
+    <style>
+        th,
+        td {
+            padding: 12px;
+            width: 30px;
+            height: 30px;
+        }
+        td:hover{
+            background-color: lightgray;
+        }
+    </style>
+</head>
+
+<body>
+    <div>
+        <h1 style="text-align: center;">학습 시간표 입력</h1>
+    </div>
+    <!-- <hr> -->
+    <div style="text-align: center;">
+        <table border="1" style="border-collapse: collapse; margin: auto;">
+            <thead>
+                <tr>
+                    <th>시간 / 요일</th>
+                    <th>월</th>
+                    <th>화</th>
+                    <th>수</th>
+                    <th>목</th>
+                    <th>금</th>
+                    <th>토</th>
+                    <th>일</th>
+                </tr>
+            </thead>
+            <tbody id="timebody">
+                
+            </tbody>
+        </table>
+        <script>
+            const timebody = document.getElementById('timebody');
+            const start = 9;
+            const end = 21;
+
+            for(let hour = start; hour<=end; hour++){
+                const tr = document.createElement('tr');
+                const timetd = document.createElement('td');
+                timetd.textContent = `${hour}~${hour+1}`;
+                tr.appendChild(timetd);
+
+            for(let day = 0; day <=6; day ++){
+                const daytd = document.createElement('td');
+                tr.appendChild(daytd);
+                daytd.addEventListener('click', ()=> {
+                    if(daytd.style.backgroundColor == 'lightgreen'){
+                        daytd.style.backgroundColor = 'white'
+                    }else{
+                        daytd.style.backgroundColor = 'lightgreen'
+                    }
+                })
+            } 
+            timebody.appendChild(tr)
+            }
+        </script>
+    </div>
+    <div style="height: 300px;"></div>
+</body>
+
+</html>
