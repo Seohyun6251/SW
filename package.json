@@ -1,0 +1,29 @@
+{
+  "name": "sw",
+  "version": "1.0.0",
+  "description": "사용자의 시험 일정, 과목별  중요도와 학습 필요도, 공부 가능 시간을 바탕으로 개인별 학습 시간표를 생성하는 웹 프로젝트",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Seohyun6251/SW.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Seohyun6251/SW/issues"
+  },
+  "homepage": "https://github.com/Seohyun6251/SW#readme",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "express-session": "^1.19.0",
+    "mysql2": "^3.24.6"
+  }
+}

@@ -1,30 +1,37 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>시험 과목 입력</title>
+
     <style>
         body {
             display: flex;
-            height: 100vh;
+            min-height: 100vh;
             justify-content: center;
             align-items: center;
             background-color: rgb(253, 250, 250);
+            margin: 0;
         }
 
         .content {
-            /* background-color: ; */
-            width: 400px;
+            width: 600px;
             padding: 40px;
             border-radius: 20px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
             background-color: white;
         }
 
+        #subjectForm {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
         .input_d {
-            margin: 20px;
+            min-width: 0;
         }
 
         input {
@@ -36,7 +43,14 @@
         }
 
         label {
+            display: block;
             margin-bottom: 10px;
+        }
+
+        .form_buttons {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 10px;
         }
 
         button {
@@ -46,44 +60,88 @@
             border: solid 1px;
             background-color: black;
             color: white;
+            cursor: pointer;
         }
     </style>
 </head>
 
 <body>
     <div class="content">
-        <h2 style="text-align: center;">시험과목 및 날짜 입력</h2>
+        <h2 style="text-align: center;">시험 과목 및 날짜 입력</h2>
+
         <form id="subjectForm">
             <div class="input_d">
-                <label style="display: block;">과목명</label>
-                <input type="text" id="subject" placeholder="예: 자료구조">
+                <label for="subject" style="display: block;">과목명</label>
+
+                <input type="text" id="subject" name="name" placeholder="예: 자료구조" required>
             </div>
+
             <div class="input_d">
-                <label style="display: block;">시험 날짜</label>
-                <input type="date" id="date">
+                <label for="date" style="display: block;">시험 날짜</label>
+                <input type="date" id="date" name="examDate" required>
             </div>
-            <div style="display: flex; gap: 10px; margin: 20px">
+
+            <div class="input_d">
+                <label for="studyNeed" style="display: block;">공부 필요도</label>
+
+                <input type="number" id="studyNeed" name="studyNeed" placeholder="0~100" min="0" max="100"
+                    step="1" required>
+            </div>
+
+            <div class="input_d">
+                <label for="importance" style="display: block;">과목 중요도</label>
+
+                <input type="number" id="importance" name="importance" placeholder="1~5" step="1" min="1" max="5"
+                    required>
+            </div>
+
+            <div class="form_buttons">
+
                 <button type="submit">등록</button>
-                <button onclick="location.href='index.html'">다음 페이지</button>
+
+                <button type="button" onclick="location.href='time.html'">
+                    다음 페이지
+                </button>
             </div>
         </form>
     </div>
+
     <script>
         const subjectForm = document.getElementById('subjectForm');
 
-        subjectForm.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
+
+        subjectForm.addEventListener('submit', async (event) => {
+
+            event.preventDefault();
+
+            const formData = new FormData(subjectForm);
+
+            const requestData = {
+                name: formData.get('name'),
+                examDate: formData.get('examDate'),
+                studyNeed: Number(formData.get('studyNeed')),
+                importance: Number(formData.get('importance'))
+            };
+
+            try {
+                const response = await fetch('/api/subjects', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                const result = await response.json();
+                alert(result.message);
+
+                if (response.ok) {
+                    subjectForm.reset();
+                }
+            } catch (error) {
+                alert('서버에 연결할 수 없습니다.');
+                console.error('요청 오류:', error);
             }
-        });
-
-        subjectForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-
-            const subject = document.getElementById('subject')
-            const date = document.getElementById('date')
-            subject.value = ''
-            date.value = ''
         });
     </script>
 </body>

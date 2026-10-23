@@ -53,37 +53,62 @@
 <body>
     <div class="content">
         <h2 style="text-align: center;">로그인 페이지</h2>
-        <form id="subjectForm">
+        <form id="authForm">
             <div class="input_d">
                 <label style="display: block;">아이디</label>
-                <input type="text" id="ID">
+                <input type="text" id="ID" name="username" required>
             </div>
             <div class="input_d">
                 <label style="display: block;">비밀번호</label>
-                <input type="text" id="PW">
+                <input type="password" id="PW" name="password" required>
             </div>
             <div style="display: flex; gap: 10px; margin: 20px">
-                <button type="submit">로그인</button>
-                <button onclick="location.href='index.html'">회원가입</button>
+                <button type="submit" name="action" value="login">로그인</button>
+                <button type="submit" name="action" value="signup">회원가입</button>
             </div>
         </form>
     </div>
     <script>
-        const subjectForm = document.getElementById('subjectForm');
+        const authForm = document.getElementById('authForm');
 
-        subjectForm.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
+        authForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            const action = event.submitter.value;
+
+            const url = action === 'login' ? '/api/login' : '/api/signup';
+
+            const formData = new FormData(authForm);
+
+            const requestData = {
+                username: formData.get('username'),
+                password: formData.get('password')
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                const result = await response.json();
+
+                alert(result.message);
+
+                if (response.ok) {
+                    if(action === 'login'){
+                        window.location.href = 'Subject.html'
+                    } else{
+                        authForm.reset();
+                    }
+                }
+            } catch (error) {
+                alert('서버에 연결할 수 없습니다. 백엔드 서버가 실행 중인지 확인해 주세요.');
+                console.error('요청 오류:', error);
             }
-        });
-
-        subjectForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-
-            const subject = document.getElementById('ID')
-            const date = document.getElementById('PW')
-            subject.value = ''
-            date.value = ''
         });
     </script>
 </body>
