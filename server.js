@@ -196,6 +196,92 @@ app.post('/api/subjects', async (req, res) => {
         });
     }
 });
+
+// 로그인한 사용자의 주간 공부 가능 시간을 저장합니다.
+app.post('/api/study-slots', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({
+            message: '먼저 로그인해 주세요.'
+        });
+    }
+
+    const { slots } = req.body;
+    const validDays = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+    if (!Array.isArray(slots) || slots.length === 0) {
+        return res.status(400).json({
+            message: '공부할 수 있는 시간을 하나 이상 선택해 주세요.'
+        });
+    }
+
+    // 예: "mon_9"를 요일 "mon", 시작 시각 9로 나눕니다.
+    const parsedSlots = [];
+
+    for (const slot of slots) {
+        const match = /^([a-z]{3})_(\d{1,2})$/.exec(slot);
+
+        if (!match) {
+            return res.status(400).json({
+                message: '시간표 선택 형식이 올바르지 않습니다.'
+            });
+        }
+
+        const day = match[1];
+        const hour = Number(match[2]);
+
+        if (!validDays.includes(day) || hour < 9 || hour > 21) {
+            return res.status(400).json({
+                message: '요일 또는 시간이 올바르지 않습니다.'
+            });
+        }
+
+        parsedSlots.push([day, hour]);
+    }
+
+    let connection;
+
+    try {
+        connection = await db.getConnection();
+        await connection.beginTransaction();
+
+        // 기존 시간표를 지우고 현재 선택된 시간으로 다시 저장합니다.
+        await connection.execute(
+            'DELETE FROM study_slots WHERE user_id = ?',
+            [req.session.userId]
+        );
+
+        const rows = parsedSlots.map(([day, hour]) => [
+            req.session.userId,
+            day,
+            hour
+        ]);
+
+        await connection.query(
+            'INSERT INTO study_slots (user_id, day_of_week, start_hour) VALUES ?',
+            [rows]
+        );
+
+        await connection.commit();
+
+        return res.json({
+            message: '주간 공부 가능 시간이 저장됐습니다.'
+        });
+    } catch (error) {
+        if (connection) {
+            await connection.rollback();
+        }
+
+        console.error('시간표 저장 오류:', error.message);
+
+        return res.status(500).json({
+            message: '시간표 저장 중 오류가 발생했습니다.'
+        });
+    } finally {
+        if (connection) {
+            connection.release();
+        }
+    }
+});
 // 브라우저가 페이지를 찾지 못했을 때 보여줄 기본 페이지입니다.
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'sign_up.html'));

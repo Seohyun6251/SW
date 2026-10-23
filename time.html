@@ -15,7 +15,7 @@
 
         th,
         td {
-            height: 65px;
+            height: 45px;
             padding: 4px;
             box-sizing: border-box;
             overflow: hidden;
@@ -28,20 +28,29 @@
 
         body {
             display: flex;
-            justify-content: center;
+            flex-direction: column;
             align-items: center;
             background-color: rgb(253, 250, 250);
-            padding-top: 70px;
+            padding-top: 30px;
         }
 
         .content {
-            width: 750px;
+            width: 700px;
             min-height: 300px;
             padding: 40px;
             border-radius: 20px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
             background-color: white;
             box-sizing: border-box;
+        }
+
+        button {
+            height: 44px;
+            width: 110px;
+            border-radius: 8px;
+            border: solid 1px;
+            cursor: pointer;
+            font-size: 14px;
         }
     </style>
 </head>
@@ -69,46 +78,75 @@
             </table>
         </div>
         <script>
-            const pos = {}
-            const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-            const timebody = document.getElementById('timebody');
-            const start = 9;
-            const end = 21;
+            document.addEventListener('DOMContentLoaded', () => {
+                const pos = {}
+                const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+                const timebody = document.getElementById('timebody');
+                const start = 9;
+                const end = 21;
 
-            for (let hour = start; hour <= end; hour++) {
-                const timetr = document.createElement('tr');
-                const timetd = document.createElement('td');
-                timetd.textContent = `${hour}~${hour + 1}`;
-                timetr.appendChild(timetd);
+                for (let hour = start; hour <= end; hour++) {
+                    const timetr = document.createElement('tr');
+                    const timetd = document.createElement('td');
+                    timetd.textContent = `${hour}~${hour + 1}`;
+                    timetr.appendChild(timetd);
 
-                for (let day = 0; day <= 6; day++) {
-                    const daytd = document.createElement('td');
-                    timetr.appendChild(daytd);
-                    const daykey = days[day];
-                    daytd.id = `${daykey}_${hour}`;
+                    for (let day = 0; day <= 6; day++) {
+                        const daytd = document.createElement('td');
+                        timetr.appendChild(daytd);
+                        const daykey = days[day];
+                        daytd.id = `${daykey}_${hour}`;
 
-                    daytd.addEventListener('click', () => {
-                        if (daytd.style.backgroundColor == 'lightblue') {
-                            daytd.style.backgroundColor = 'white'
-                        } else {
-                            daytd.style.backgroundColor = 'lightblue'
-                        }
+                        daytd.addEventListener('click', () => {
+                            if (daytd.style.backgroundColor == 'lightblue') {
+                                daytd.style.backgroundColor = 'white'
+                            } else {
+                                daytd.style.backgroundColor = 'lightblue'
+                            }
+                            if (pos[daytd.id]) {
+                                delete pos[daytd.id]
+                            }
+                            else {
+                                pos[daytd.id] = true;
+                            }
 
-                        if (pos[daytd.id]) {
-                            delete pos[daytd.id]
-                        }
-                        else {
-                            pos[daytd.id] = true;
-                        }
+                        })
 
-
-                    })
-
+                    }
+                    timebody.appendChild(timetr)
                 }
-                timebody.appendChild(timetr)
-            }
 
+                document.getElementById('saveSlots').addEventListener('click', async () => {
+                    const selectedSlots = Object.keys(pos);
+
+                    if (selectedSlots.length === 0) {
+                        alert('공부할 수 있는 시간을 하나 이상 선택해 주세요.');
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch('/api/study-slots', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ slots: selectedSlots })
+                        });
+
+                        const result = await response.json();
+                        alert(result.message);
+                    } catch (error) {
+                        alert('서버에 연결할 수 없습니다.');
+                        console.error('요청 오류:', error);
+                    }
+                });
+            });
         </script>
+    </div>
+    <div style="display: flex; gap: 16px; padding: 30px">
+        <button style="background-color: white;" onclick="location.href='Subject.html'"><-&nbsp; 이전</button>
+                <button id="saveSlots" type="button" style="background-color: black; color: white;">다음 &nbsp;->
+                </button>
     </div>
 </body>
 

@@ -1,7 +1,8 @@
 # SW 자동학습 스케줄링 시스템
 
 ## 프로젝트 소개 
-사용자의 시험 일정, 과목별  중요도와 학습 필요도, 공부 가능 시간을 바탕으로 개인별 학습 시간표를 생성하는 웹 프로젝트
+사용자의 시험 일정, 과목별 중요도와 학습 필요도, 
+공부 가능 시간을 바탕으로 개인별 학습 시간표를 생성하는 웹 프로젝트
 
 ## 프로젝트 목표
 - 학습 우선순위와 과목별 학습시간 자동 계산
@@ -17,6 +18,9 @@
 - OS: Windows 11
 - IDE: Visual Studio Code
 - Frontend: HTML, CSS, JavaScript
+- Backend: Node.js
+- Database: MySQL
+- Database Tool: MySQL Workbench 8.0
 
 ## 개발 계획
 
