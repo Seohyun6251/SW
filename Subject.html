@@ -32,14 +32,16 @@
             height: 39px;
             border-radius: 5px;
             border: solid 1px;
+            box-sizing: border-box;
         }
 
         label {
             margin-bottom: 10px;
         }
-        button{
+
+        button {
             flex: 1;
-            height: 40px;       
+            height: 40px;
             border-radius: 5px;
             border: solid 1px;
             background-color: black;
@@ -60,7 +62,7 @@
                 <label style="display: block;">시험 날짜</label>
                 <input type="date" id="date">
             </div>
-            <div style="display: flex; gap: 10px; margin: 20px;">
+            <div style="display: flex; gap: 10px; margin: 20px">
                 <button type="submit">등록</button>
                 <button onclick="location.href='index.html'">다음 페이지</button>
             </div>
@@ -82,9 +84,6 @@
             const date = document.getElementById('date')
             subject.value = ''
             date.value = ''
-
-            console.log(subject.value);
-            console.log(date.value);
         });
     </script>
 </body>

@@ -9,12 +9,12 @@
         th,
         td {
             padding: 12px;
-            width: 30px;
+            width: 1000px;
             height: 30px;
         }
 
         td:hover {
-            background-color: lightgray;
+            background-color: #E8F1FF;
         }
 
         body {
@@ -23,11 +23,12 @@
             justify-content: center;
             align-items: center;
             background-color: rgb(253, 250, 250);
+            padding-top: 70px;
         }
 
         .content {
             /* background-color: ; */
-            width: 400px;
+            width: 550px;
             padding: 40px;
             border-radius: 20px;
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
@@ -43,7 +44,7 @@
             <table border="1" style="border-collapse: collapse; margin: auto;">
                 <thead>
                     <tr>
-                        <th>시간 / 요일</th>
+                        <th>시간/요일</th>
                         <th>월</th>
                         <th>화</th>
                         <th>수</th>
@@ -78,10 +79,10 @@
                     daytd.id = `${daykey}_${hour}`;
 
                     daytd.addEventListener('click', () => {
-                        if (daytd.style.backgroundColor == 'lightgreen') {
+                        if (daytd.style.backgroundColor == 'lightblue') {
                             daytd.style.backgroundColor = 'white'
                         } else {
-                            daytd.style.backgroundColor = 'lightgreen'
+                            daytd.style.backgroundColor = 'lightblue'
                         }
 
                         if (pos[daytd.id]) {
@@ -91,8 +92,7 @@
                             pos[daytd.id] = true;
                         }
 
-                        console.log("선택된 총 칸 수:", Object.keys(pos).length);
-                        console.log("현재 딕셔너리 상태:", pos);
+
                     })
 
                 }
