@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
-
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>학습 시간표</title>
+
     <style>
         table {
             table-layout: fixed;
@@ -20,10 +20,19 @@
             box-sizing: border-box;
             overflow: hidden;
             overflow-wrap: anywhere;
+            font-weight: bold;
+        }
+
+        td {
+            cursor: pointer;
         }
 
         td:hover {
             background-color: #E8F1FF;
+        }
+
+        td.selected {
+            background-color: lightblue;
         }
 
         body {
@@ -31,123 +40,195 @@
             flex-direction: column;
             align-items: center;
             background-color: rgb(253, 250, 250);
-            padding-top: 30px;
+            padding: 30px 16px 0;
+            margin: 0;
         }
 
         .content {
-            width: 700px;
+            width: min(700px, 100%);
             min-height: 300px;
-            padding: 40px;
+            padding: 32px;
             border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
             background-color: white;
             box-sizing: border-box;
         }
 
+        .buttons {
+            display: flex;
+            gap: 16px;
+            padding: 24px;
+        }
+
         button {
             height: 44px;
-            width: 110px;
+            width: 130px;
             border-radius: 8px;
             border: solid 1px;
             cursor: pointer;
             font-size: 14px;
         }
+
+        #slotMessage {
+            text-align: center;
+            min-height: 1.5em;
+        }
+
+        @media (max-width: 560px) {
+            .content {
+                padding: 12px;
+            }
+
+            th,
+            td {
+                height: 38px;
+                padding: 2px;
+                font-size: 12px;
+            }
+        }
     </style>
 </head>
 
 <body>
-    <div class="content">
+    <main class="content">
         <h1 style="text-align: center;">학습 시간표 입력</h1>
-        <div style="text-align: center;">
-            <table border="1">
-                <thead>
-                    <tr>
-                        <th>시간/요일</th>
-                        <th>월</th>
-                        <th>화</th>
-                        <th>수</th>
-                        <th>목</th>
-                        <th>금</th>
-                        <th>토</th>
-                        <th>일</th>
-                    </tr>
-                </thead>
-                <tbody id="timebody">
 
-                </tbody>
-            </table>
-        </div>
-        <script>
-            document.addEventListener('DOMContentLoaded', () => {
-                const pos = {}
-                const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-                const timebody = document.getElementById('timebody');
-                const start = 9;
-                const end = 21;
+        <table border="1">
+            <thead>
+                <tr>
+                    <th>시간/요일</th>
+                    <th>월</th>
+                    <th>화</th>
+                    <th>수</th>
+                    <th>목</th>
+                    <th>금</th>
+                    <th>토</th>
+                    <th>일</th>
+                </tr>
+            </thead>
+            <tbody id="timebody"></tbody>
+        </table>
 
-                for (let hour = start; hour <= end; hour++) {
-                    const timetr = document.createElement('tr');
-                    const timetd = document.createElement('td');
-                    timetd.textContent = `${hour}~${hour + 1}`;
-                    timetr.appendChild(timetd);
+        <p id="slotMessage" aria-live="polite"></p>
+    </main>
 
-                    for (let day = 0; day <= 6; day++) {
-                        const daytd = document.createElement('td');
-                        timetr.appendChild(daytd);
-                        const daykey = days[day];
-                        daytd.id = `${daykey}_${hour}`;
+    <div class="buttons">
+        <button
+            type="button"
+            style="background-color: white;"
+            onclick="location.href='Subject.html'"
+        >
+            ← 이전
+        </button>
 
-                        daytd.addEventListener('click', () => {
-                            if (daytd.style.backgroundColor == 'lightblue') {
-                                daytd.style.backgroundColor = 'white'
-                            } else {
-                                daytd.style.backgroundColor = 'lightblue'
-                            }
-                            if (pos[daytd.id]) {
-                                delete pos[daytd.id]
-                            }
-                            else {
-                                pos[daytd.id] = true;
-                            }
+        <button
+            id="saveSlots"
+            type="button"
+            style="background-color: black; color: white;"
+        >
+            다음 →
+        </button>
+    </div>
 
-                        })
+    <script>
+        const pos = {};
+        const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+        const timebody = document.getElementById('timebody');
+        const slotMessage = document.getElementById('slotMessage');
+        const start = 9;
+        const end = 21; // 21시 시작 칸까지 있어 마지막 칸은 21~22시입니다.
+        for (let hour = start; hour <= end; hour++) {
+            const row = document.createElement('tr');
+            const timeCell = document.createElement('td');
 
-                    }
-                    timebody.appendChild(timetr)
-                }
+            timeCell.textContent = `${hour}~${hour + 1}`;
+            row.appendChild(timeCell);
 
-                document.getElementById('saveSlots').addEventListener('click', async () => {
-                    const selectedSlots = Object.keys(pos);
+            for (const day of days) {
+                const cell = document.createElement('td');
+                cell.id = `${day}_${hour}`;
 
-                    if (selectedSlots.length === 0) {
-                        alert('공부할 수 있는 시간을 하나 이상 선택해 주세요.');
-                        return;
-                    }
-
-                    try {
-                        const response = await fetch('/api/study-slots', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({ slots: selectedSlots })
-                        });
-
-                        const result = await response.json();
-                        alert(result.message);
-                    } catch (error) {
-                        alert('서버에 연결할 수 없습니다.');
-                        console.error('요청 오류:', error);
+                cell.addEventListener('click', () => {
+                    if (pos[cell.id]) {
+                        delete pos[cell.id];
+                        cell.classList.remove('selected');
+                    } else {
+                        pos[cell.id] = true;
+                        cell.classList.add('selected');
                     }
                 });
-            });
-        </script>
-    </div>
-    <div style="display: flex; gap: 16px; padding: 30px">
-        <button style="background-color: white;" onclick="location.href='Subject.html'"><-&nbsp; 이전</button>
-                <button id="saveSlots" type="button" style="background-color: black; color: white;">다음 &nbsp;->
-                </button>
-    </div>
-</body>
 
+                row.appendChild(cell);
+            }
+
+            timebody.appendChild(row);
+        }
+        async function loadSavedSlots() {
+            slotMessage.textContent = '저장된 시간을 불러오는 중입니다.';
+
+            try {
+                const response = await fetch('/api/study-slots');
+                const slots = await response.json();
+
+                if (!response.ok) {
+                    slotMessage.textContent =
+                        slots.message || '시간을 불러오지 못했습니다.';
+                    return;
+                }
+
+                for (const slot of slots) {
+                    const cellId =
+                        `${slot.day_of_week}_${slot.start_hour}`;
+                    const cell = document.getElementById(cellId);
+
+                    if (cell) {
+                        pos[cellId] = true;
+                        cell.classList.add('selected');
+                    }
+                }
+
+                slotMessage.textContent = slots.length > 0
+                    ? '저장된 시간이 선택된 상태로 표시됩니다.'
+                    : '저장된 시간이 없습니다. 가능한 시간을 선택해 주세요.';
+            } catch (error) {
+                slotMessage.textContent = '서버에 연결할 수 없습니다.';
+                console.error('시간 불러오기 오류:', error);
+            }
+        }
+        document
+            .getElementById('saveSlots')
+            .addEventListener('click', async () => {
+                const selectedSlots = Object.keys(pos);
+
+                if (selectedSlots.length === 0) {
+                    alert('공부할 수 있는 시간을 하나 이상 선택해 주세요.');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/study-slots', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            slots: selectedSlots
+                        })
+                    });
+
+                    const result = await response.json();
+                    alert(result.message);
+
+                    if (response.ok) {
+                        window.location.href = 'schedule.html';
+                    }
+                } catch (error) {
+                    alert('서버에 연결할 수 없습니다.');
+                    console.error('시간 저장 오류:', error);
+                }
+            });
+
+        loadSavedSlots();
+    </script>
+</body>
 </html>

@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+    <title>로그인 및 회원가입</title>
     <style>
         body {
             display: flex;
@@ -15,7 +15,6 @@
         }
 
         .content {
-            /* background-color: ; */
             width: 400px;
             padding: 40px;
             border-radius: 20px;
@@ -74,7 +73,7 @@
         authForm.addEventListener('submit', async (event) => {
             event.preventDefault();
 
-            const action = event.submitter.value;
+            const action = event.submitter?.value || 'login';
 
             const url = action === 'login' ? '/api/login' : '/api/signup';
 

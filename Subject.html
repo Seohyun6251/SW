@@ -1,11 +1,9 @@
 <!DOCTYPE html>
 <html lang="ko">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>시험 과목 입력</title>
-
     <style>
         body {
             display: flex;
@@ -14,45 +12,37 @@
             align-items: center;
             background-color: rgb(253, 250, 250);
             margin: 0;
+            padding: 24px;
+            box-sizing: border-box;
         }
-
         .content {
-            width: 600px;
-            padding: 40px;
+            width: min(700px, 100%);
+            padding: 36px;
             border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
             background-color: white;
+            box-sizing: border-box;
         }
-
         #subjectForm {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 20px;
+            gap: 18px;
         }
-
-        .input_d {
-            min-width: 0;
-        }
-
+        .input_d { min-width: 0; }
         input {
             width: 100%;
             height: 39px;
             border-radius: 5px;
-            border: solid 1px;
+            border: solid 1px #888;
             box-sizing: border-box;
+            padding: 8px;
         }
-
-        label {
-            display: block;
-            margin-bottom: 10px;
-        }
-
+        label { display: block; margin-bottom: 8px; }
         .form_buttons {
             grid-column: 1 / -1;
             display: flex;
             gap: 10px;
         }
-
         button {
             flex: 1;
             height: 40px;
@@ -62,60 +52,159 @@
             color: white;
             cursor: pointer;
         }
+        .subject-list { margin-top: 30px; }
+        .subject-list table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .subject-list th, .subject-list td {
+            border: 1px solid #ccc;
+            padding: 9px;
+            text-align: left;
+            overflow-wrap: anywhere;
+        }
+        .delete-button {
+            width: auto;
+            padding: 0 10px;
+            background-color: #a40000;
+        }
+        #subjectListMessage { color: #555; }
+        @media (max-width: 560px) {
+            .content { padding: 22px; }
+            #subjectForm { grid-template-columns: 1fr; }
+            .form_buttons { grid-column: 1; }
+            .subject-list th, .subject-list td { padding: 6px; font-size: 13px; }
+        }
     </style>
 </head>
-
 <body>
-    <div class="content">
+    <main class="content">
         <h2 style="text-align: center;">시험 과목 및 날짜 입력</h2>
 
         <form id="subjectForm">
             <div class="input_d">
-                <label for="subject" style="display: block;">과목명</label>
-
+                <label for="subject">과목명</label>
                 <input type="text" id="subject" name="name" placeholder="예: 자료구조" required>
             </div>
-
             <div class="input_d">
-                <label for="date" style="display: block;">시험 날짜</label>
+                <label for="date">시험 날짜</label>
                 <input type="date" id="date" name="examDate" required>
             </div>
-
             <div class="input_d">
-                <label for="studyNeed" style="display: block;">공부 필요도</label>
-
-                <input type="number" id="studyNeed" name="studyNeed" placeholder="0~100" min="0" max="100"
-                    step="1" required>
+                <label for="studyNeed">공부 필요도 (0~100)</label>
+                <input type="number" id="studyNeed" name="studyNeed" placeholder="60" min="0" max="100" step="1" required>
             </div>
-
             <div class="input_d">
-                <label for="importance" style="display: block;">과목 중요도</label>
-
-                <input type="number" id="importance" name="importance" placeholder="1~5" step="1" min="1" max="5"
-                    required>
+                <label for="importance">과목 중요도 (1~5)</label>
+                <input type="number" id="importance" name="importance" placeholder="1~5" min="1" max="5" step="1" required>
             </div>
-
             <div class="form_buttons">
-
                 <button type="submit">등록</button>
-
-                <button type="button" onclick="location.href='time.html'">
-                    다음 페이지
-                </button>
+                <button type="button" onclick="location.href='time.html'">다음 페이지</button>
             </div>
         </form>
-    </div>
+
+        <section class="subject-list">
+            <h3>내가 등록한 과목</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>과목명</th>
+                        <th>시험 날짜</th>
+                        <th>공부 필요도</th>
+                        <th>중요도</th>
+                        <th>관리</th>
+                    </tr>
+                </thead>
+                <tbody id="subjectList"></tbody>
+            </table>
+            <p id="subjectListMessage" aria-live="polite"></p>
+        </section>
+    </main>
 
     <script>
         const subjectForm = document.getElementById('subjectForm');
+        const subjectList = document.getElementById('subjectList');
+        const subjectListMessage = document.getElementById('subjectListMessage');
 
+        async function deleteSubject(subjectId) {
+            if (!confirm('이 과목을 삭제할까요?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/subjects/${subjectId}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+                alert(result.message);
+
+                if (response.ok) {
+                    await loadSubjects();
+                }
+            } catch (error) {
+                alert('서버에 연결할 수 없습니다.');
+                console.error('과목 삭제 오류:', error);
+            }
+        }
+
+        async function loadSubjects() {
+            subjectList.replaceChildren();
+            subjectListMessage.textContent = '과목을 불러오는 중입니다.';
+
+            try {
+                const response = await fetch('/api/subjects');
+                const subjects = await response.json();
+
+                if (!response.ok) {
+                    subjectListMessage.textContent = subjects.message || '과목을 불러오지 못했습니다.';
+                    return;
+                }
+
+                if (subjects.length === 0) {
+                    subjectListMessage.textContent = '아직 등록한 과목이 없습니다.';
+                    return;
+                }
+
+                subjectListMessage.textContent = '';
+
+                for (const subject of subjects) {
+                    const row = document.createElement('tr');
+                    const values = [
+                        subject.name,
+                        subject.exam_date,
+                        subject.study_need,
+                        subject.importance
+                    ];
+
+                    for (const value of values) {
+                        const cell = document.createElement('td');
+                        cell.textContent = String(value);
+                        row.appendChild(cell);
+                    }
+
+                    const actionCell = document.createElement('td');
+                    const deleteButton = document.createElement('button');
+                    deleteButton.type = 'button';
+                    deleteButton.className = 'delete-button';
+                    deleteButton.textContent = '삭제';
+                    deleteButton.addEventListener('click', () => {
+                        deleteSubject(subject.id);
+                    });
+                    actionCell.appendChild(deleteButton);
+                    row.appendChild(actionCell);
+
+                    subjectList.appendChild(row);
+                }
+            } catch (error) {
+                subjectListMessage.textContent = '서버에 연결할 수 없습니다.';
+                console.error('과목 조회 오류:', error);
+            }
+        }
 
         subjectForm.addEventListener('submit', async (event) => {
-
             event.preventDefault();
-
             const formData = new FormData(subjectForm);
-
             const requestData = {
                 name: formData.get('name'),
                 examDate: formData.get('examDate'),
@@ -126,24 +215,25 @@
             try {
                 const response = await fetch('/api/subjects', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestData)
                 });
-
                 const result = await response.json();
                 alert(result.message);
 
                 if (response.ok) {
                     subjectForm.reset();
+                    await loadSubjects();
                 }
             } catch (error) {
                 alert('서버에 연결할 수 없습니다.');
-                console.error('요청 오류:', error);
+                console.error('과목 저장 오류:', error);
             }
         });
+
+        loadSubjects();
     </script>
 </body>
-
 </html>
+
+

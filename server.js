@@ -1,18 +1,14 @@
-// Express 서버와 웹페이지 파일을 제공하는 데 필요한 도구를 불러옵니다.
 require('dotenv').config(); // .env 설정 읽기
 const session = require('express-session'); // 세션 도구 불러오기
 
-const db = require('./db');           // MySQL 연결 불러오기
+const db = require('./db');
+const scheduler = require('./scheduler');           // MySQL 연결 불러오기
 const bcrypt = require('bcryptjs');   // 비밀번호 해시 도구 불러오기
 
 const express = require('express');
 const path = require('path');
-
-// 서버 앱을 만듭니다.
 const app = express();
 const PORT = 3000;
-
-// JSON 형식으로 온 요청 내용을 읽을 수 있게 합니다.
 app.use(express.json());
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -24,15 +20,9 @@ app.use(session({
         maxAge: 1000 * 60 * 60 * 24 // 로그인 상태를 최대 1일 유지
     }
 }));
-
-// 같은 폴더의 HTML 파일들을 브라우저에 보여줄 수 있게 합니다.
 app.use(express.static(__dirname));
-
-// 로그인 버튼이 보낸 요청을 받습니다.
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
-
-    // 아이디와 비밀번호가 비어 있는지 확인
     if (!username || !password) {
         return res.status(400).json({
             message: '아이디와 비밀번호를 입력해 주세요.'
@@ -40,13 +30,10 @@ app.post('/api/login', async (req, res) => {
     }
 
     try {
-        // 입력한 아이디에 해당하는 사용자 정보를 DB에서 찾습니다.
         const [users] = await db.execute(
             'SELECT id, username, password_hash FROM users WHERE username = ?',
             [username]
         );
-
-        // 해당 아이디가 없으면 로그인 실패
         if (users.length === 0) {
             return res.status(401).json({
                 message: '아이디 또는 비밀번호가 올바르지 않습니다.'
@@ -54,8 +41,6 @@ app.post('/api/login', async (req, res) => {
         }
 
         const user = users[0];
-
-        // 입력한 비밀번호와 DB에 저장된 해시를 비교합니다.
         const passwordMatches = await bcrypt.compare(
             password,
             user.password_hash
@@ -66,7 +51,6 @@ app.post('/api/login', async (req, res) => {
                 message: '아이디 또는 비밀번호가 올바르지 않습니다.'
             });
         }
-
 
         req.session.userId = user.id;
 
@@ -91,22 +75,8 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-app.get('/api/me', (req, res) => {
-    if (!req.session.userId) {
-        return res.json({ loggedIn: false });
-    }
-
-    return res.json({
-        loggedIn: true,
-        userId: req.session.userId
-    });
-});
-
-// 회원가입 버튼이 보낸 요청을 받습니다.
 app.post('/api/signup', async (req, res) => {
     const { username, password } = req.body;
-
-    // 아이디와 비밀번호가 비어 있는지 확인
     if (!username || !password) {
         return res.status(400).json({
             message: '아이디와 비밀번호를 입력해 주세요.'
@@ -114,10 +84,7 @@ app.post('/api/signup', async (req, res) => {
     }
 
     try {
-        // 비밀번호를 해시로 변환합니다. 원래 비밀번호는 DB에 저장하지 않습니다.
         const passwordHash = await bcrypt.hash(password, 10);
-
-        // users 테이블에 아이디와 해시된 비밀번호를 저장합니다.
         await db.execute(
             'INSERT INTO users (username, password_hash) VALUES (?, ?)',
             [username, passwordHash]
@@ -127,14 +94,11 @@ app.post('/api/signup', async (req, res) => {
             message: '회원가입이 완료됐습니다.'
         });
     } catch (error) {
-        // 이미 사용 중인 아이디라면 안내 메시지를 보냅니다.
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({
                 message: '이미 사용 중인 아이디입니다.'
             });
         }
-
-        // 비밀번호나 전체 요청 내용을 출력하지 않고 오류만 기록합니다.
         console.error('회원가입 처리 오류:', error.message);
 
         return res.status(500).json({
@@ -142,8 +106,6 @@ app.post('/api/signup', async (req, res) => {
         });
     }
 });
-
-// 로그인한 사용자의 과목을 DB에 저장합니다.
 app.post('/api/subjects', async (req, res) => {
     if (!req.session.userId) {
         return res.status(401).json({
@@ -154,8 +116,6 @@ app.post('/api/subjects', async (req, res) => {
     const { name, examDate } = req.body;
     const studyNeed = Number(req.body.studyNeed);
     const importance = Number(req.body.importance);
-
-    // 네 입력값이 모두 올바른지 확인합니다.
     if (
         !name ||
         !examDate ||
@@ -196,8 +156,6 @@ app.post('/api/subjects', async (req, res) => {
         });
     }
 });
-
-// 로그인한 사용자의 주간 공부 가능 시간을 저장합니다.
 app.post('/api/study-slots', async (req, res) => {
     if (!req.session.userId) {
         return res.status(401).json({
@@ -213,8 +171,6 @@ app.post('/api/study-slots', async (req, res) => {
             message: '공부할 수 있는 시간을 하나 이상 선택해 주세요.'
         });
     }
-
-    // 예: "mon_9"를 요일 "mon", 시작 시각 9로 나눕니다.
     const parsedSlots = [];
 
     for (const slot of slots) {
@@ -238,13 +194,42 @@ app.post('/api/study-slots', async (req, res) => {
         parsedSlots.push([day, hour]);
     }
 
+    if (new Set(parsedSlots.map(([day, hour]) => `${day}_${hour}`)).size !== parsedSlots.length) {
+        return res.status(400).json({
+            message: '같은 시간 칸이 중복 선택됐습니다.'
+        });
+    }
+
+    let subjectCount;
+    try {
+        const [[countRow]] = await db.execute(
+            'SELECT COUNT(*) AS subjectCount FROM subjects WHERE user_id = ?',
+            [req.session.userId]
+        );
+        subjectCount = Number(countRow.subjectCount);
+    } catch (error) {
+        console.error('과목 수 확인 오류:', error.message);
+        return res.status(500).json({
+            message: '과목 수를 확인하지 못했습니다.'
+        });
+    }
+
+    if (subjectCount === 0) {
+        return res.status(400).json({
+            message: '먼저 과목을 하나 이상 등록해 주세요.'
+        });
+    }
+
+    if (parsedSlots.length < subjectCount) {
+        return res.status(400).json({
+            message: `공부 가능 시간(${parsedSlots.length}시간)이 과목 수(${subjectCount}개)보다 적습니다.`
+        });
+    }
     let connection;
 
     try {
         connection = await db.getConnection();
         await connection.beginTransaction();
-
-        // 기존 시간표를 지우고 현재 선택된 시간으로 다시 저장합니다.
         await connection.execute(
             'DELETE FROM study_slots WHERE user_id = ?',
             [req.session.userId]
@@ -282,12 +267,218 @@ app.post('/api/study-slots', async (req, res) => {
         }
     }
 });
-// 브라우저가 페이지를 찾지 못했을 때 보여줄 기본 페이지입니다.
+app.get('/api/subjects', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({
+            message: '먼저 로그인해 주세요.'
+        });
+    }
+
+    try {
+        const [subjects] = await db.execute(
+            `SELECT id, name,
+                    DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
+                    study_need, importance,
+                    temporary_need_bonus, permanent_need_bonus
+             FROM subjects
+             WHERE user_id = ?
+             ORDER BY exam_date`,
+            [req.session.userId]
+        );
+
+        return res.json(subjects);
+    } catch (error) {
+        console.error('과목 조회 오류:', error.message);
+        return res.status(500).json({
+            message: '과목을 불러오지 못했습니다.'
+        });
+    }
+});
+app.delete('/api/subjects/:id', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({
+            message: '먼저 로그인해 주세요.'
+        });
+    }
+
+    const subjectId = Number(req.params.id);
+
+    if (!Number.isInteger(subjectId)) {
+        return res.status(400).json({
+            message: '과목 번호가 올바르지 않습니다.'
+        });
+    }
+
+    try {
+        const [result] = await db.execute(
+            'DELETE FROM subjects WHERE id = ? AND user_id = ?',
+            [subjectId, req.session.userId]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({
+                message: '과목을 찾을 수 없습니다.'
+            });
+        }
+
+        return res.json({
+            message: '과목을 삭제했습니다.'
+        });
+    } catch (error) {
+        console.error('과목 삭제 오류:', error.message);
+        return res.status(500).json({
+            message: '과목을 삭제하지 못했습니다.'
+        });
+    }
+});
+app.get('/api/study-slots', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({
+            message: '먼저 로그인해 주세요.'
+        });
+    }
+
+    try {
+        const [slots] = await db.execute(
+            `SELECT day_of_week, start_hour
+             FROM study_slots
+             WHERE user_id = ?
+             ORDER BY FIELD(day_of_week, 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'),
+                      start_hour`,
+            [req.session.userId]
+        );
+
+        return res.json(slots);
+    } catch (error) {
+        console.error('공부 가능 시간 조회 오류:', error.message);
+        return res.status(500).json({
+            message: '공부 가능 시간을 불러오지 못했습니다.'
+        });
+    }
+});
+app.get('/api/schedule', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({ message: '먼저 로그인해 주세요.' });
+    }
+
+    let subjects;
+    let weeklySlots;
+
+    try {
+        [subjects] = await db.execute(
+            `SELECT id, name,
+                    DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
+                    study_need, importance,
+                    temporary_need_bonus, permanent_need_bonus
+             FROM subjects
+             WHERE user_id = ?
+             ORDER BY exam_date`,
+            [req.session.userId]
+        );
+
+        [weeklySlots] = await db.execute(
+            `SELECT day_of_week, start_hour
+             FROM study_slots
+             WHERE user_id = ?
+             ORDER BY FIELD(day_of_week, 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'),
+                      start_hour`,
+            [req.session.userId]
+        );
+    } catch (error) {
+        console.error('시간표 자료 조회 오류:', error.message);
+        return res.status(500).json({
+            message: '과목 또는 공부 가능 시간을 불러오지 못했습니다.'
+        });
+    }
+
+    if (subjects.length === 0) {
+        return res.status(400).json({
+            message: '먼저 과목을 하나 이상 등록해 주세요.'
+        });
+    }
+
+    if (weeklySlots.length === 0) {
+        return res.status(400).json({
+            message: '공부할 수 있는 시간을 하나 이상 선택해 주세요.'
+        });
+    }
+
+    const dayIndexes = {
+        mon: 0,
+        tue: 1,
+        wed: 2,
+        thu: 3,
+        fri: 4,
+        sat: 5,
+        sun: 6
+    };
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+    const monday = new Date(todayDate);
+    const daysUntilMonday = ((8 - monday.getDay()) % 7) || 7;
+    monday.setDate(monday.getDate() + daysUntilMonday);
+
+    function formatDate(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
+    const weekDates = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(monday);
+        date.setDate(monday.getDate() + index);
+        return formatDate(date);
+    });
+    const latestExamDate = subjects.reduce(
+        (latest, subject) => subject.exam_date > latest ? subject.exam_date : latest,
+        subjects[0].exam_date
+    );
+    const availableSlots = weeklySlots
+        .filter((slot) => weekDates[dayIndexes[slot.day_of_week]] <= latestExamDate)
+        .map((slot) => ({
+            studyDate: weekDates[dayIndexes[slot.day_of_week]],
+            startHour: Number(slot.start_hour)
+        }));
+
+    if (availableSlots.length < subjects.length) {
+        return res.status(400).json({
+            message: `다음 주 시험일까지 배정 가능한 공부 시간이 과목 수(${subjects.length}개)보다 적습니다.`
+        });
+    }
+
+    const schedulerSubjects = subjects.map((subject) => ({
+        id: Number(subject.id),
+        name: subject.name,
+        examDate: subject.exam_date,
+        importance: Number(subject.importance),
+        studyNeed: Number(subject.study_need),
+        temporaryNeedBonus: Number(subject.temporary_need_bonus),
+        permanentNeedBonus: Number(subject.permanent_need_bonus)
+    }));
+
+    try {
+        const result = scheduler.makeSchedule(
+            schedulerSubjects,
+            availableSlots,
+            formatDate(todayDate)
+        );
+
+        return res.json({
+            weekDates,
+            totalAvailableSlots: availableSlots.length,
+            allocations: result.allocations,
+            schedule: result.schedule
+        });
+    } catch (error) {
+        return res.status(400).json({ message: error.message });
+    }
+});
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'sign_up.html'));
 });
-
-// 서버를 실행합니다.
 app.listen(PORT, () => {
     console.log(`서버 실행 중: http://localhost:${PORT}`);
 });
+
+
