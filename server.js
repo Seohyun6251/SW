@@ -331,6 +331,280 @@ app.delete('/api/subjects/:id', async (req, res) => {
         });
     }
 });
+
+app.post('/api/schedule/complete-makeup', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({ message: '먼저 로그인해 주세요.' });
+    }
+
+    let subjects;
+    let weeklySlots;
+    try {
+        [subjects] = await db.execute(
+            `SELECT id, name,
+                    DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
+                    study_need, importance,
+                    temporary_need_bonus, permanent_need_bonus
+             FROM subjects WHERE user_id = ? ORDER BY exam_date`,
+            [req.session.userId]
+        );
+        [weeklySlots] = await db.execute(
+            `SELECT day_of_week, start_hour FROM study_slots
+             WHERE user_id = ?
+             ORDER BY FIELD(day_of_week, 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'), start_hour`,
+            [req.session.userId]
+        );
+    } catch (error) {
+        console.error('보충 완료 자료 조회 오류:', error.message);
+        return res.status(500).json({ message: '과목 또는 공부 가능 시간을 불러오지 못했습니다.' });
+    }
+
+    if (subjects.length === 0 || weeklySlots.length === 0) {
+        return res.status(400).json({ message: '과목과 공부 가능 시간을 먼저 등록해 주세요.' });
+    }
+
+    const dayIndexes = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+    const monday = new Date(todayDate);
+    monday.setDate(monday.getDate() + (((8 - monday.getDay()) % 7) || 7));
+    const formatDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const weekDates = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(monday);
+        date.setDate(monday.getDate() + index);
+        return formatDate(date);
+    });
+    const latestExamDate = subjects.reduce(
+        (latest, subject) => subject.exam_date > latest ? subject.exam_date : latest,
+        subjects[0].exam_date
+    );
+    const availableSlots = weeklySlots
+        .filter((slot) => weekDates[dayIndexes[slot.day_of_week]] <= latestExamDate)
+        .map((slot) => ({
+            studyDate: weekDates[dayIndexes[slot.day_of_week]],
+            startHour: Number(slot.start_hour)
+        }));
+    const schedulerSubjects = subjects.map((subject) => ({
+        id: Number(subject.id),
+        name: subject.name,
+        examDate: subject.exam_date,
+        importance: Number(subject.importance),
+        studyNeed: Number(subject.study_need),
+        temporaryNeedBonus: Number(subject.temporary_need_bonus),
+        permanentNeedBonus: Number(subject.permanent_need_bonus)
+    }));
+
+    try {
+        const result = scheduler.completeMakeup(
+            schedulerSubjects,
+            availableSlots.length,
+            formatDate(todayDate)
+        );
+        if (!result.hasPendingMakeup) {
+            return res.status(409).json({ message: '현재 보충이 필요한 과목이 없습니다.' });
+        }
+        scheduler.makeSchedule(result.subjects, availableSlots, formatDate(todayDate));
+
+        const connection = await db.getConnection();
+        try {
+            await connection.beginTransaction();
+            for (const subject of result.subjects) {
+                await connection.execute(
+                    `UPDATE subjects
+                     SET temporary_need_bonus = 0, permanent_need_bonus = ?
+                     WHERE id = ? AND user_id = ?`,
+                    [subject.permanentNeedBonus, subject.id, req.session.userId]
+                );
+            }
+            await connection.commit();
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+
+        return res.json({
+            message: '임시 필요도를 되돌리고 시간 손해를 반영했습니다.',
+            lostHours: result.lostHours
+        });
+    } catch (error) {
+        console.error('보충 완료 처리 오류:', error.message);
+        return res.status(400).json({ message: error.message || '보충 완료 처리를 하지 못했습니다.' });
+    }
+});
+
+app.post('/api/schedule/replan', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({ message: '먼저 로그인해 주세요.' });
+    }
+
+    const requests = req.body.requests;
+    if (!Array.isArray(requests) || requests.length === 0) {
+        return res.status(400).json({ message: '보충할 과목과 시간을 입력해 주세요.' });
+    }
+
+    const normalizedRequests = requests.map((request) => ({
+        subjectId: Number(request.subjectId),
+        hours: Number(request.hours)
+    }));
+    if (normalizedRequests.some(({ subjectId, hours }) =>
+        !Number.isInteger(subjectId) || subjectId < 1 || !Number.isInteger(hours) || hours < 1
+    )) {
+        return res.status(400).json({ message: '과목과 보충 시간은 올바른 정수여야 합니다.' });
+    }
+    if (new Set(normalizedRequests.map(({ subjectId }) => subjectId)).size !== normalizedRequests.length) {
+        return res.status(400).json({ message: '같은 과목을 중복 입력했습니다.' });
+    }
+
+    let subjects;
+    let weeklySlots;
+    try {
+        [subjects] = await db.execute(
+            `SELECT id, name,
+                    DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
+                    study_need, importance,
+                    temporary_need_bonus, permanent_need_bonus
+             FROM subjects WHERE user_id = ? ORDER BY exam_date`,
+            [req.session.userId]
+        );
+        [weeklySlots] = await db.execute(
+            `SELECT day_of_week, start_hour FROM study_slots
+             WHERE user_id = ?
+             ORDER BY FIELD(day_of_week, 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'), start_hour`,
+            [req.session.userId]
+        );
+    } catch (error) {
+        console.error('시간표 재계산 자료 조회 오류:', error.message);
+        return res.status(500).json({ message: '과목 또는 공부 가능 시간을 불러오지 못했습니다.' });
+    }
+
+    if (subjects.length === 0 || weeklySlots.length === 0) {
+        return res.status(400).json({ message: '과목과 공부 가능 시간을 먼저 등록해 주세요.' });
+    }
+    if (normalizedRequests.some(({ subjectId }) => !subjects.some((subject) => Number(subject.id) === subjectId))) {
+        return res.status(404).json({ message: '선택한 과목을 찾을 수 없습니다.' });
+    }
+
+    const dayIndexes = { mon: 0, tue: 1, wed: 2, thu: 3, fri: 4, sat: 5, sun: 6 };
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+    const monday = new Date(todayDate);
+    const daysUntilMonday = ((8 - monday.getDay()) % 7) || 7;
+    monday.setDate(monday.getDate() + daysUntilMonday);
+    const formatDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const weekDates = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(monday);
+        date.setDate(monday.getDate() + index);
+        return formatDate(date);
+    });
+    const latestExamDate = subjects.reduce(
+        (latest, subject) => subject.exam_date > latest ? subject.exam_date : latest,
+        subjects[0].exam_date
+    );
+    const availableSlots = weeklySlots
+        .filter((slot) => weekDates[dayIndexes[slot.day_of_week]] <= latestExamDate)
+        .map((slot) => ({
+            studyDate: weekDates[dayIndexes[slot.day_of_week]],
+            startHour: Number(slot.start_hour)
+        }));
+
+    let schedulerSubjects = subjects.map((subject) => ({
+        id: Number(subject.id),
+        name: subject.name,
+        examDate: subject.exam_date,
+        importance: Number(subject.importance),
+        studyNeed: Number(subject.study_need),
+        // 이번 입력이 기존 보충 요청을 대체하므로, 새 계산은 이전 임시 보너스 없이 시작합니다.
+        temporaryNeedBonus: 0,
+        permanentNeedBonus: Number(subject.permanent_need_bonus)
+    }));
+
+    try {
+        const today = formatDate(todayDate);
+        const baseline = scheduler.distributeSlots(schedulerSubjects, availableSlots.length, today);
+        const goals = new Map(normalizedRequests.map((request) => {
+            const current = baseline.find((subject) => subject.id === request.subjectId);
+            return [request.subjectId, current.allocatedSlots + request.hours];
+        }));
+        const minimumForOtherSubjects = schedulerSubjects.length - goals.size;
+        const totalGoal = [...goals.values()].reduce((sum, value) => sum + value, 0);
+        if (totalGoal > availableSlots.length - minimumForOtherSubjects) {
+            throw new Error('입력한 보충 시간을 모두 배정할 만큼 공부 가능 시간이 충분하지 않습니다.');
+        }
+
+        // 한 과목의 필요도를 높이면 다른 선택 과목의 배정도 달라질 수 있어,
+        // 요청한 모든 과목이 목표 시간을 받을 때까지 순서대로 다시 계산합니다.
+        let attempts = 0;
+        while (attempts < 1000) {
+            const allocations = scheduler.distributeSlots(schedulerSubjects, availableSlots.length, today);
+            const pending = normalizedRequests.filter((request) => {
+                const allocated = allocations.find((subject) => subject.id === request.subjectId).allocatedSlots;
+                return allocated < goals.get(request.subjectId);
+            });
+            if (pending.length === 0) break;
+
+            for (const request of pending) {
+                const current = scheduler.distributeSlots(schedulerSubjects, availableSlots.length, today)
+                    .find((subject) => subject.id === request.subjectId);
+                const needed = goals.get(request.subjectId) - current.allocatedSlots;
+                const result = scheduler.findTemporaryNeedBonus(
+                    schedulerSubjects,
+                    availableSlots.length,
+                    today,
+                    request.subjectId,
+                    needed
+                );
+                schedulerSubjects = result.subjects;
+                attempts++;
+                if (attempts >= 1000) break;
+            }
+        }
+
+        const finalAllocations = scheduler.distributeSlots(schedulerSubjects, availableSlots.length, today);
+        if (normalizedRequests.some((request) =>
+            finalAllocations.find((subject) => subject.id === request.subjectId).allocatedSlots < goals.get(request.subjectId)
+        )) {
+            throw new Error('입력한 보충 시간을 모두 반영할 우선순위를 계산하지 못했습니다. 과목을 나누어 시간표를 조정해 주세요.');
+        }
+
+        const changes = normalizedRequests.map((request) => {
+            const current = schedulerSubjects.find((subject) => subject.id === request.subjectId);
+            return {
+                subjectName: current.name,
+                hours: request.hours,
+                temporaryNeedBonus: current.temporaryNeedBonus
+            };
+        });
+
+        // 실제 시간표 배치까지 가능한지 확인한 뒤에만 임시 필요도를 저장합니다.
+        scheduler.makeSchedule(schedulerSubjects, availableSlots, today);
+
+        const connection = await db.getConnection();
+        try {
+            await connection.beginTransaction();
+            for (const subject of schedulerSubjects) {
+                await connection.execute(
+                    `UPDATE subjects SET temporary_need_bonus = ?
+                     WHERE id = ? AND user_id = ?`,
+                    [subject.temporaryNeedBonus, subject.id, req.session.userId]
+                );
+            }
+            await connection.commit();
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+
+        return res.json({ message: '시간표를 다시 계산했습니다.', changes });
+    } catch (error) {
+        console.error('시간표 재계산 오류:', error.message);
+        return res.status(400).json({ message: error.message || '시간표를 다시 계산하지 못했습니다.' });
+    }
+});
+
 app.get('/api/study-slots', async (req, res) => {
     if (!req.session.userId) {
         return res.status(401).json({

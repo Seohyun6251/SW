@@ -94,15 +94,15 @@
                 });
 
                 const result = await response.json();
+                if (!response.ok) {
+                    alert(result.message || '요청을 처리하지 못했습니다.');
+                    return;
+                }
 
-                alert(result.message);
-
-                if (response.ok) {
-                    if(action === 'login'){
-                        window.location.href = 'Subject.html'
-                    } else{
-                        authForm.reset();
-                    }
+                if (action === 'login') {
+                    window.location.href = 'Subject.html';
+                } else {
+                    authForm.reset();
                 }
             } catch (error) {
                 alert('서버에 연결할 수 없습니다. 백엔드 서버가 실행 중인지 확인해 주세요.');

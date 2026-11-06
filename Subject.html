@@ -68,7 +68,6 @@
             padding: 0 10px;
             background-color: #a40000;
         }
-        #subjectListMessage { color: #555; }
         @media (max-width: 560px) {
             .content { padding: 22px; }
             #subjectForm { grid-template-columns: 1fr; }
@@ -100,7 +99,7 @@
             </div>
             <div class="form_buttons">
                 <button type="submit">등록</button>
-                <button type="button" onclick="location.href='time.html'">다음 페이지</button>
+                <button id="nextPage" type="button">다음 페이지</button>
             </div>
         </form>
 
@@ -118,14 +117,12 @@
                 </thead>
                 <tbody id="subjectList"></tbody>
             </table>
-            <p id="subjectListMessage" aria-live="polite"></p>
         </section>
     </main>
 
     <script>
         const subjectForm = document.getElementById('subjectForm');
         const subjectList = document.getElementById('subjectList');
-        const subjectListMessage = document.getElementById('subjectListMessage');
 
         async function deleteSubject(subjectId) {
             if (!confirm('이 과목을 삭제할까요?')) {
@@ -137,10 +134,11 @@
                     method: 'DELETE'
                 });
                 const result = await response.json();
-                alert(result.message);
 
                 if (response.ok) {
                     await loadSubjects();
+                } else {
+                    alert(result.message || '과목을 삭제하지 못했습니다.');
                 }
             } catch (error) {
                 alert('서버에 연결할 수 없습니다.');
@@ -150,23 +148,19 @@
 
         async function loadSubjects() {
             subjectList.replaceChildren();
-            subjectListMessage.textContent = '과목을 불러오는 중입니다.';
 
             try {
                 const response = await fetch('/api/subjects');
                 const subjects = await response.json();
 
                 if (!response.ok) {
-                    subjectListMessage.textContent = subjects.message || '과목을 불러오지 못했습니다.';
+                    alert(subjects.message || '과목을 불러오지 못했습니다.');
                     return;
                 }
 
                 if (subjects.length === 0) {
-                    subjectListMessage.textContent = '아직 등록한 과목이 없습니다.';
                     return;
                 }
-
-                subjectListMessage.textContent = '';
 
                 for (const subject of subjects) {
                     const row = document.createElement('tr');
@@ -197,7 +191,7 @@
                     subjectList.appendChild(row);
                 }
             } catch (error) {
-                subjectListMessage.textContent = '서버에 연결할 수 없습니다.';
+                alert('과목을 불러오지 못했습니다. 서버가 실행 중인지 확인해 주세요.');
                 console.error('과목 조회 오류:', error);
             }
         }
@@ -219,15 +213,38 @@
                     body: JSON.stringify(requestData)
                 });
                 const result = await response.json();
-                alert(result.message);
 
                 if (response.ok) {
                     subjectForm.reset();
                     await loadSubjects();
+                } else {
+                    alert(result.message || '과목을 등록하지 못했습니다.');
                 }
             } catch (error) {
                 alert('서버에 연결할 수 없습니다.');
                 console.error('과목 저장 오류:', error);
+            }
+        });
+
+        document.getElementById('nextPage').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/api/subjects');
+                const subjects = await response.json();
+
+                if (!response.ok) {
+                    alert(subjects.message || '과목을 확인하지 못했습니다.');
+                    return;
+                }
+
+                if (subjects.length === 0) {
+                    alert('과목을 하나 이상 등록해 주세요.');
+                    return;
+                }
+
+                window.location.href = 'time.html';
+            } catch (error) {
+                alert('과목을 확인하지 못했습니다. 서버가 실행 중인지 확인해 주세요.');
+                console.error('다음 페이지 이동 전 과목 확인 오류:', error);
             }
         });
 

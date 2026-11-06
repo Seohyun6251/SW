@@ -77,7 +77,7 @@
             baseNeed + temporaryBonus + permanentBonus
         );
         const daysUntilExam = getDaysUntilExam(subject.examDate, today);
-        const priority = importance * currentNeed / Math.sqrt(daysUntilExam);
+        const priority = importance * currentNeed / Math.sqrt(daysUntilExam); //  우선순위 알고리즘 중요도 * 필요도 * 시험 임박도
 
         return {
             ...subject,
@@ -100,7 +100,7 @@
         const scored = subjects.map((subject) =>
             calculatePriority(subject, today)
         );
-        const extraSlots = totalSlots - scored.length;
+        const extraSlots = totalSlots - scored.length;                      // 기본 베이스 제외한 시간
         const priorityTotal = scored.reduce(
             (sum, subject) => sum + subject.priority,
             0
@@ -111,8 +111,8 @@
         const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
 
         const allocations = scored.map((subject, index) => {
-            const exactExtra = extraSlots * weights[index] / weightTotal;
-            const wholeExtra = Math.floor(exactExtra);
+            const exactExtra = extraSlots * weights[index] / weightTotal;     // 기본베이스 * 현재 과목의 우선순위 / 과목 전체 우선순위 합    ex) = 7 × 0.4 = 2.8시간   
+            const wholeExtra = Math.floor(exactExtra);                        // 소수점 처리 
 
             return {
                 ...subject,
@@ -142,6 +142,83 @@
         }
 
         return allocations.map(({ fractionalPart, originalIndex, ...subject }) => subject);
+    }
+
+    function findTemporaryNeedBonus(subjects, totalSlots, today, subjectId, additionalSlots) {
+        if (!Number.isInteger(additionalSlots) || additionalSlots < 1) {
+            throw new Error('보충할 시간은 1시간 이상이어야 합니다.');
+        }
+
+        const original = subjects.find((subject) => subject.id === subjectId);
+        if (!original) {
+            throw new Error('선택한 과목을 찾을 수 없습니다.');
+        }
+
+        const baseline = distributeSlots(subjects, totalSlots, today);
+        const baselineAllocation = baseline.find((subject) => subject.id === subjectId);
+        const targetSlots = baselineAllocation.allocatedSlots + additionalSlots;
+        const maximumSlots = totalSlots - subjects.length + 1;
+
+        if (targetSlots > maximumSlots) {
+            throw new Error(`${original.name} 과목에 ${additionalSlots}시간을 더 배정할 수 있는 공부 시간이 부족합니다.`);
+        }
+
+        const startingBonus = Number(original.temporaryNeedBonus || 0);
+        for (let bonus = startingBonus; bonus <= startingBonus + 100000; bonus++) {
+            const candidates = subjects.map((subject) => subject.id === subjectId
+                ? { ...subject, temporaryNeedBonus: bonus }
+                : subject
+            );
+            const allocations = distributeSlots(candidates, totalSlots, today);
+            const target = allocations.find((subject) => subject.id === subjectId);
+
+            if (target.allocatedSlots >= targetSlots) {
+                return {
+                    subjects: candidates,
+                    allocations,
+                    temporaryNeedBonus: bonus,
+                    addedTemporaryNeed: bonus - startingBonus,
+                    baselineAllocation: baselineAllocation.allocatedSlots,
+                    targetAllocation: target.allocatedSlots
+                };
+            }
+        }
+
+        throw new Error(`${original.name} 과목의 추가 시간을 계산하지 못했습니다.`);
+    }
+
+    function completeMakeup(subjects, totalSlots, today) {
+        const hasPendingMakeup = subjects.some(
+            (subject) => Number(subject.temporaryNeedBonus || 0) > 0
+        );
+        if (!hasPendingMakeup) {
+            return { subjects, lostHours: [], hasPendingMakeup: false };
+        }
+
+        const currentAllocations = distributeSlots(subjects, totalSlots, today);
+        const withoutTemporaryBonus = subjects.map((subject) => ({
+            ...subject,
+            temporaryNeedBonus: 0
+        }));
+        const baselineAllocations = distributeSlots(withoutTemporaryBonus, totalSlots, today);
+        const lostHours = [];
+
+        const completedSubjects = withoutTemporaryBonus.map((subject) => {
+            const current = currentAllocations.find((item) => item.id === subject.id);
+            const baseline = baselineAllocations.find((item) => item.id === subject.id);
+            const lost = Math.max(0, baseline.allocatedSlots - current.allocatedSlots);
+
+            if (lost > 0) {
+                lostHours.push({ subjectId: subject.id, subjectName: subject.name, hours: lost });
+            }
+
+            return {
+                ...subject,
+                permanentNeedBonus: Number(subject.permanentNeedBonus || 0) + lost * 7
+            };
+        });
+
+        return { subjects: completedSubjects, lostHours, hasPendingMakeup: true };
     }
     function makeSchedule(subjects, availableSlots, today) {
         if (!Array.isArray(availableSlots)) {
@@ -230,6 +307,8 @@
     return {
         calculatePriority,
         distributeSlots,
+        findTemporaryNeedBonus,
+        completeMakeup,
         makeSchedule
     };
 });
