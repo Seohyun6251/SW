@@ -208,18 +208,22 @@
                 영구필요도보너스: subject.permanentNeedBonus,
                 현재필요도: subject.currentNeed,
                 시험까지_일수: subject.daysUntilExam,
-                우선순위: subject.priority
+                우선순위: subject.priority,
+                이번주목표시간: subject.weeklyTargetSlots ?? subject.allocatedSlots,
+                실제주간배정: subject.allocatedSlots
             })));
 
             const subjectCount = data.allocations.length;
             const totalSlots = data.totalAvailableSlots;
-            const extraSlots = totalSlots - subjectCount;
+            const basePerSubject = totalSlots >= subjectCount ? 1 : 0;
+            const baseSlots = basePerSubject * subjectCount;
+            const extraSlots = totalSlots - baseSlots;
             const priorityTotal = data.allocations.reduce(
                 (sum, subject) => sum + subject.priority,
                 0
             );
-            console.log(`시간 배분 수식: 과목별 1시간 + 남은 ${extraSlots}시간 × (과목 우선순위 ÷ 전체 우선순위 합)`);
-            console.log(`입력값: 선택 가능 시간 ${totalSlots}칸, 과목 ${subjectCount}개, 기본 배정 ${subjectCount}칸, 추가 배정 ${extraSlots}칸, 전체 우선순위 합 ${priorityTotal}`);
+            console.log(`시간 배분 수식: 과목별 기본 ${basePerSubject}시간 + 남은 ${extraSlots}시간 × (과목 우선순위 ÷ 전체 우선순위 합)`);
+            console.log(`입력값: 앞으로 가능한 시간 ${totalSlots}칸, 과목 ${subjectCount}개, 기본 배정 ${baseSlots}칸, 추가 배정 ${extraSlots}칸, 전체 우선순위 합 ${priorityTotal}`);
             console.table(data.allocations.map((subject) => {
                 const ratio = priorityTotal === 0
                     ? 1 / subjectCount
@@ -229,19 +233,20 @@
                     과목: subject.name,
                     우선순위비율: ratio,
                     추가시간_정확값: exactExtra,
-                    소수점버림후_기본1시간포함: 1 + Math.floor(exactExtra),
-                    가장큰소수점배분후_최종시간: subject.allocatedSlots
+                    소수점버림후_기본시간포함: basePerSubject + Math.floor(exactExtra),
+                    소수점배분_주간목표시간: subject.weeklyTargetSlots ?? subject.allocatedSlots,
+                    지난시간_반영후_실제주간배정: subject.allocatedSlots
                 };
             }));
 
-            console.log('시간표 배치 기준: 시험일이 공부 날짜보다 늦거나 같은 과목 중, (이미 배정한 시간 ÷ 목표 시간)이 가장 낮은 과목을 선택합니다. 비율이 같으면 우선순위가 높은 과목을 선택합니다.');
+            console.log('시간표 배치 기준: 지난 배정량을 포함해 주간 목표를 계산하고, 남은 목표가 남은 시험 전 시간에 비해 큰 과목부터 연속 시간 블록으로 배치합니다.');
             console.table(data.schedule.map((item, index) => ({
                 순서: index + 1,
                 공부일: item.studyDate,
                 시작시간: `${item.startHour}:00`,
                 배정과목: item.subjectName,
-                배정전후보: item.candidates.map((candidate) =>
-                    `${candidate.subjectName}: ${candidate.assignedBefore}/${candidate.allocatedSlots} (${(candidate.progress * 100).toFixed(1)}%), 우선순위 ${candidate.priority.toFixed(2)}`
+                배정전후보: (item.candidates || []).map((candidate) =>
+                    `${candidate.subjectName}: ${candidate.assignedBefore}/${candidate.allocatedSlots} (${(candidate.progress * 100).toFixed(1)}%), 남은비율 ${candidate.urgency.toFixed(2)}, 우선순위 ${candidate.priority.toFixed(2)}`
                 ).join(' | ')
             })));
             console.groupEnd();
