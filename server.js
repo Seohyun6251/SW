@@ -58,7 +58,16 @@ function getScheduleContext(subjects, weeklySlots, now = new Date()) {
         slot.studyDate > today || (slot.studyDate === today && slot.startHour > currentHour)
     );
 
-    return { today, todayDate, currentHour, weekDates, availableSlots, futureSlots };
+    return {
+        today,
+        todayDate,
+        currentHour,
+        weekDates,
+        // 주간 배정 우선순위는 이번 주 안에서 월요일 기준으로 고정합니다.
+        priorityDate: weekDates[0],
+        availableSlots,
+        futureSlots
+    };
 }
 
 function toSchedulerSubjects(subjects, { clearTemporaryBonus = false } = {}) {
@@ -132,7 +141,7 @@ async function ensurePastScheduleSnapshot(userId, subjects, context) {
     const reconstructed = scheduler.makeLegacySchedule(
         schedulerSubjects,
         context.availableSlots,
-        context.today
+        context.priorityDate
     ).schedule.filter((item) =>
         hasPassed(item, context) && !savedKeys.has(`${item.studyDate}_${item.startHour}`)
     );
@@ -528,7 +537,7 @@ app.post('/api/schedule/complete-makeup', async (req, res) => {
         const result = scheduler.completeMakeup(
             schedulerSubjects,
             context.futureSlots.length,
-            context.today,
+            context.priorityDate,
             actualWeekSchedule
         );
         if (!result.hasPendingMakeup) {
@@ -538,7 +547,9 @@ app.post('/api/schedule/complete-makeup', async (req, res) => {
             result.subjects,
             context.futureSlots,
             context.today,
-            fixedSchedule
+            fixedSchedule,
+            context.priorityDate,
+            context.availableSlots.length
         ).schedule;
 
         const connection = await db.getConnection();
@@ -641,7 +652,13 @@ app.post('/api/schedule/replan', async (req, res) => {
             context
         );
         const fixedSchedule = getFixedSchedule(savedSchedule, context);
-        const baseline = scheduler.distributeFutureSlots(schedulerSubjects, slotCount, today, fixedSchedule);
+        const baseline = scheduler.distributeFutureSlots(
+            schedulerSubjects,
+            slotCount,
+            context.priorityDate,
+            fixedSchedule,
+            context.availableSlots.length
+        );
         const goals = new Map(normalizedRequests.map((request) => {
             const current = baseline.find((subject) => subject.id === request.subjectId);
             return [request.subjectId, current.allocatedSlots + request.hours];
@@ -655,7 +672,13 @@ app.post('/api/schedule/replan', async (req, res) => {
         // 요청한 모든 과목이 목표 시간을 받을 때까지 순서대로 다시 계산합니다.
         let attempts = 0;
         while (attempts < 1000) {
-            const allocations = scheduler.distributeFutureSlots(schedulerSubjects, slotCount, today, fixedSchedule);
+            const allocations = scheduler.distributeFutureSlots(
+                schedulerSubjects,
+                slotCount,
+                context.priorityDate,
+                fixedSchedule,
+                context.availableSlots.length
+            );
             const pending = normalizedRequests.filter((request) => {
                 const allocated = allocations.find((subject) => subject.id === request.subjectId).allocatedSlots;
                 return allocated < goals.get(request.subjectId);
@@ -663,16 +686,23 @@ app.post('/api/schedule/replan', async (req, res) => {
             if (pending.length === 0) break;
 
             for (const request of pending) {
-                const current = scheduler.distributeFutureSlots(schedulerSubjects, slotCount, today, fixedSchedule)
+                const current = scheduler.distributeFutureSlots(
+                    schedulerSubjects,
+                    slotCount,
+                    context.priorityDate,
+                    fixedSchedule,
+                    context.availableSlots.length
+                )
                     .find((subject) => subject.id === request.subjectId);
                 const needed = goals.get(request.subjectId) - current.allocatedSlots;
                 const result = scheduler.findTemporaryNeedBonus(
                     schedulerSubjects,
                     slotCount,
-                    today,
+                    context.priorityDate,
                     request.subjectId,
                     needed,
-                    fixedSchedule
+                    fixedSchedule,
+                    context.availableSlots.length
                 );
                 schedulerSubjects = result.subjects;
                 attempts++;
@@ -680,7 +710,13 @@ app.post('/api/schedule/replan', async (req, res) => {
             }
         }
 
-        const finalAllocations = scheduler.distributeFutureSlots(schedulerSubjects, slotCount, today, fixedSchedule);
+        const finalAllocations = scheduler.distributeFutureSlots(
+            schedulerSubjects,
+            slotCount,
+            context.priorityDate,
+            fixedSchedule,
+            context.availableSlots.length
+        );
         if (normalizedRequests.some((request) =>
             finalAllocations.find((subject) => subject.id === request.subjectId).allocatedSlots < goals.get(request.subjectId)
         )) {
@@ -698,7 +734,14 @@ app.post('/api/schedule/replan', async (req, res) => {
 
         // 실제 시간표 배치까지 가능한지 확인한 뒤에만 임시 필요도를 저장합니다.
         const futureSchedule = slotCount > 0
-            ? scheduler.makeSchedule(schedulerSubjects, context.futureSlots, today, fixedSchedule).schedule
+            ? scheduler.makeSchedule(
+                schedulerSubjects,
+                context.futureSlots,
+                today,
+                fixedSchedule,
+                context.priorityDate,
+                context.availableSlots.length
+            ).schedule
             : [];
 
         const connection = await db.getConnection();
@@ -802,7 +845,9 @@ app.get('/api/schedule', async (req, res) => {
             schedulerSubjects,
             context.futureSlots,
             context.today,
-            fixedSchedule
+            fixedSchedule,
+            context.priorityDate,
+            context.availableSlots.length
         );
 
         const connection = await db.getConnection();

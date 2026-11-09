@@ -139,9 +139,18 @@
         return allocations.map(({ fractionalPart, originalIndex, ...subject }) => subject);
     }
 
-    function distributeFutureSlots(subjects, futureSlotCount, today, fixedSchedule = []) {
+    function distributeFutureSlots(
+        subjects,
+        futureSlotCount,
+        priorityDate,
+        fixedSchedule = [],
+        totalWeekSlotCount = futureSlotCount + fixedSchedule.length
+    ) {
         if (!Number.isInteger(futureSlotCount) || futureSlotCount < 0 || !Array.isArray(fixedSchedule)) {
             throw new Error('남은 시간표 정보가 올바르지 않습니다.');
+        }
+        if (!Number.isInteger(totalWeekSlotCount) || totalWeekSlotCount < futureSlotCount) {
+            throw new Error('이번 주 전체 시간표 정보가 올바르지 않습니다.');
         }
 
         const fixedCounts = new Map(subjects.map((subject) => [subject.id, 0]));
@@ -153,8 +162,8 @@
 
         const weeklyTargets = distributeSlots(
             subjects,
-            futureSlotCount + fixedSchedule.length,
-            today
+            totalWeekSlotCount,
+            priorityDate
         );
         const futureAllocations = weeklyTargets.map((subject) => ({
             ...subject,
@@ -177,7 +186,15 @@
         return futureAllocations;
     }
 
-    function findTemporaryNeedBonus(subjects, futureSlotCount, today, subjectId, additionalSlots, fixedSchedule = []) {
+    function findTemporaryNeedBonus(
+        subjects,
+        futureSlotCount,
+        priorityDate,
+        subjectId,
+        additionalSlots,
+        fixedSchedule = [],
+        totalWeekSlotCount = futureSlotCount + fixedSchedule.length
+    ) {
         if (!Number.isInteger(additionalSlots) || additionalSlots < 1) {
             throw new Error('보충할 시간은 1시간 이상이어야 합니다.');
         }
@@ -187,7 +204,9 @@
             throw new Error('선택한 과목을 찾을 수 없습니다.');
         }
 
-        const baseline = distributeFutureSlots(subjects, futureSlotCount, today, fixedSchedule);
+        const baseline = distributeFutureSlots(
+            subjects, futureSlotCount, priorityDate, fixedSchedule, totalWeekSlotCount
+        );
         const baselineAllocation = baseline.find((subject) => subject.id === subjectId);
         const targetSlots = baselineAllocation.allocatedSlots + additionalSlots;
         const maximumSlots = futureSlotCount;
@@ -202,7 +221,9 @@
                 ? { ...subject, temporaryNeedBonus: bonus }
                 : subject
             );
-            const allocations = distributeFutureSlots(candidates, futureSlotCount, today, fixedSchedule);
+            const allocations = distributeFutureSlots(
+                candidates, futureSlotCount, priorityDate, fixedSchedule, totalWeekSlotCount
+            );
             const target = allocations.find((subject) => subject.id === subjectId);
 
             if (target.allocatedSlots >= targetSlots) {
@@ -220,7 +241,7 @@
         throw new Error(`${original.name} 과목의 추가 시간을 계산하지 못했습니다.`);
     }
 
-    function completeMakeup(subjects, totalSlots, today, actualSchedule) {
+    function completeMakeup(subjects, totalSlots, priorityDate, actualSchedule) {
         const hasPendingMakeup = subjects.some(
             (subject) => Number(subject.temporaryNeedBonus || 0) > 0
         );
@@ -237,7 +258,7 @@
                 }
             }
         } else {
-            for (const subject of distributeSlots(subjects, trackedSlots, today)) {
+            for (const subject of distributeSlots(subjects, trackedSlots, priorityDate)) {
                 currentCounts.set(subject.id, subject.allocatedSlots);
             }
         }
@@ -245,7 +266,7 @@
             ...subject,
             temporaryNeedBonus: 0
         }));
-        const baselineAllocations = distributeSlots(withoutTemporaryBonus, trackedSlots, today);
+        const baselineAllocations = distributeSlots(withoutTemporaryBonus, trackedSlots, priorityDate);
         const lostHours = [];
 
         const completedSubjects = withoutTemporaryBonus.map((subject) => {
@@ -265,7 +286,7 @@
         return { subjects: completedSubjects, lostHours, hasPendingMakeup: true };
     }
 
-    function makeLegacySchedule(subjects, availableSlots, today) {
+    function makeLegacySchedule(subjects, availableSlots, priorityDate) {
         const slots = availableSlots.map((slot) => ({
             studyDate: toDateKey(slot.studyDate, '공부'),
             startHour: Number(slot.startHour)
@@ -276,7 +297,7 @@
             throw new Error('기존 시간표를 복원할 수 있는 공부 가능 시간이 부족합니다.');
         }
 
-        const allocations = distributeSlots(subjects, slots.length, today);
+        const allocations = distributeSlots(subjects, slots.length, priorityDate);
         const assignedCount = new Map(allocations.map((subject) => [subject.id, 0]));
         const remainingCount = new Map(allocations.map((subject) => [subject.id, subject.allocatedSlots]));
         const schedule = [];
@@ -318,7 +339,14 @@
         return { allocations, schedule };
     }
 
-    function makeSchedule(subjects, availableSlots, today, fixedSchedule = []) {
+    function makeSchedule(
+        subjects,
+        availableSlots,
+        today,
+        fixedSchedule = [],
+        priorityDate = today,
+        totalWeekSlotCount
+    ) {
         if (!Array.isArray(availableSlots)) {
             throw new Error('가능한 시간 칸 목록이 올바르지 않습니다.');
         }
@@ -352,8 +380,11 @@
             throw new Error('같은 날짜와 시간 칸이 중복되어 있습니다.');
         }
 
-        const remainingAllocations = distributeFutureSlots(subjects, slots.length, today, fixedSchedule);
-        const allocations = distributeSlots(subjects, slots.length + fixedSchedule.length, today);
+        const weeklySlotCount = totalWeekSlotCount ?? slots.length + fixedSchedule.length;
+        const remainingAllocations = distributeFutureSlots(
+            subjects, slots.length, priorityDate, fixedSchedule, weeklySlotCount
+        );
+        const allocations = distributeSlots(subjects, weeklySlotCount, priorityDate);
         const assignedCount = new Map(allocations.map((subject) => [
             subject.id,
             fixedSchedule.filter((item) => item.subjectId === subject.id).length
@@ -401,7 +432,9 @@
                 const candidates = getCandidates(slotIndex);
                 const chosen = candidates[0];
                 if (!chosen) {
-                    throw new Error('시험일까지 과목을 배치할 수 있는 시간이 부족합니다.');
+                    // 남은 과목의 시험일이 지난 칸은 비워 두고 시간표 생성을 계속합니다.
+                    slotIndex++;
+                    continue;
                 }
 
                 const blockLength = Math.min(remainingCount.get(chosen.id), runEnd - slotIndex);
@@ -434,13 +467,6 @@
                 }
             }
             runStart = runEnd;
-        }
-
-        const unassignedSubjects = remainingAllocations.filter(
-            (subject) => remainingCount.get(subject.id) > 0
-        );
-        if (unassignedSubjects.length > 0) {
-            throw new Error('시험일까지 과목을 배치할 수 있는 시간이 부족합니다.');
         }
 
         // 같은 날 배정된 과목을 한 시간 구간 안에 모을 수 있으면 블록으로 옮깁니다.
