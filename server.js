@@ -224,6 +224,17 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+app.post('/api/logout', (req, res) => {
+    req.session.destroy((error) => {
+        if (error) {
+            console.error('로그아웃 처리 오류:', error.message);
+            return res.status(500).json({ message: '로그아웃하지 못했습니다.' });
+        }
+        res.clearCookie('connect.sid');
+        return res.json({ message: '로그아웃했습니다.' });
+    });
+});
+
 app.post('/api/signup', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {

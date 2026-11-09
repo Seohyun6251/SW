@@ -54,9 +54,7 @@
             (dateKeyToUtc(examKey) - dateKeyToUtc(todayKey)) / DAY_MS
         );
 
-        if (difference < 0) {
-            throw new Error(`${examKey} 시험은 이미 지났습니다.`);
-        }
+        // 시험이 지난 과목 때문에 다른 과목의 계산까지 중단되지 않게 합니다.
         return Math.max(1, difference);
     }
     function calculatePriority(subject, today) {
@@ -286,7 +284,7 @@
         for (const slot of slots) {
             const candidates = allocations
                 .filter((subject) =>
-                    remainingCount.get(subject.id) > 0 && subject.examDate >= slot.studyDate
+                    remainingCount.get(subject.id) > 0 && subject.examDate > slot.studyDate
                 )
                 .sort((a, b) => {
                     const aProgress = assignedCount.get(a.id) / a.allocatedSlots;
@@ -295,7 +293,8 @@
                 });
             const chosen = candidates[0];
             if (!chosen) {
-                throw new Error('기존 시간표를 시험일까지 배치할 수 없습니다.');
+                // 시험일 당일 이후의 슬롯은 어떤 과목에도 배정하지 않습니다.
+                continue;
             }
 
             schedule.push({
@@ -316,9 +315,6 @@
             remainingCount.set(chosen.id, remainingCount.get(chosen.id) - 1);
         }
 
-        if (allocations.some((subject) => remainingCount.get(subject.id) > 0)) {
-            throw new Error('기존 시간표의 과목별 시간을 모두 배치할 수 없습니다.');
-        }
         return { allocations, schedule };
     }
 
@@ -328,6 +324,12 @@
         }
         if (!Array.isArray(fixedSchedule)) {
             throw new Error('이미 지난 시간표가 올바르지 않습니다.');
+        }
+
+        // 시험일 당일과 그 이후에는 해당 과목을 새 시간표에서 제외합니다.
+        subjects = subjects.filter((subject) => toDateKey(subject.examDate, '시험') > toDateKey(today, '오늘'));
+        if (subjects.length === 0) {
+            return { allocations: [], schedule: [] };
         }
 
         const slots = availableSlots.map((slot) => {
@@ -366,7 +368,7 @@
             const slot = slots[slotIndex];
             return remainingAllocations
                 .filter((subject) =>
-                    remainingCount.get(subject.id) > 0 && subject.examDate >= slot.studyDate
+                    remainingCount.get(subject.id) > 0 && subject.examDate > slot.studyDate
                 )
                 .map((subject) => {
                     const eligibleSlots = slots.slice(slotIndex)
@@ -439,6 +441,122 @@
         );
         if (unassignedSubjects.length > 0) {
             throw new Error('시험일까지 과목을 배치할 수 있는 시간이 부족합니다.');
+        }
+
+        // 같은 날 배정된 과목을 한 시간 구간 안에 모을 수 있으면 블록으로 옮깁니다.
+        const subjectById = new Map(allocations.map((subject) => [subject.id, subject]));
+        let dayStart = 0;
+        while (dayStart < schedule.length) {
+            let dayEnd = dayStart + 1;
+            while (dayEnd < schedule.length && schedule[dayEnd].studyDate === schedule[dayStart].studyDate) {
+                dayEnd++;
+            }
+
+            const runs = [];
+            let runStart = dayStart;
+            for (let index = dayStart + 1; index <= dayEnd; index++) {
+                const isEndOfRun = index === dayEnd ||
+                    schedule[index].startHour !== schedule[index - 1].startHour + 1;
+                if (isEndOfRun) {
+                    runs.push(Array.from({ length: index - runStart }, (_, offset) => runStart + offset));
+                    runStart = index;
+                }
+            }
+
+            const dailyCounts = new Map();
+            for (let index = dayStart; index < dayEnd; index++) {
+                const subjectId = schedule[index].subjectId;
+                dailyCounts.set(subjectId, (dailyCounts.get(subjectId) || 0) + 1);
+            }
+            const blocks = [...dailyCounts.entries()].map(([subjectId, count]) => {
+                const subject = subjectById.get(subjectId);
+                return {
+                    subjectId,
+                    subjectName: subject.name,
+                    examDate: subject.examDate,
+                    priority: subject.priority,
+                    count
+                };
+            }).sort((a, b) =>
+                b.count - a.count ||
+                a.examDate.localeCompare(b.examDate) ||
+                b.priority - a.priority
+            );
+
+            const remainingCapacity = runs.map((run) => run.length);
+            const blockRun = new Array(blocks.length).fill(-1);
+            function fitBlocks(blockIndex) {
+                if (blockIndex === blocks.length) {
+                    return remainingCapacity.every((capacity) => capacity === 0);
+                }
+
+                const triedCapacities = new Set();
+                for (let runIndex = 0; runIndex < runs.length; runIndex++) {
+                    const capacity = remainingCapacity[runIndex];
+                    if (capacity < blocks[blockIndex].count || triedCapacities.has(capacity)) continue;
+                    triedCapacities.add(capacity);
+                    remainingCapacity[runIndex] -= blocks[blockIndex].count;
+                    blockRun[blockIndex] = runIndex;
+                    if (fitBlocks(blockIndex + 1)) return true;
+                    remainingCapacity[runIndex] += blocks[blockIndex].count;
+                    blockRun[blockIndex] = -1;
+                }
+                return false;
+            }
+
+            if (fitBlocks(0)) {
+                const blocksByRun = runs.map(() => []);
+                blocks.forEach((block, index) => blocksByRun[blockRun[index]].push(block));
+                for (let runIndex = 0; runIndex < runs.length; runIndex++) {
+                    const runBlocks = blocksByRun[runIndex].sort((a, b) =>
+                        a.examDate.localeCompare(b.examDate) ||
+                        b.priority - a.priority ||
+                        a.subjectId - b.subjectId
+                    );
+                    let slotOffset = 0;
+                    for (const block of runBlocks) {
+                        for (let offset = 0; offset < block.count; offset++) {
+                            const item = schedule[runs[runIndex][slotOffset++]];
+                            item.subjectId = block.subjectId;
+                            item.subjectName = block.subjectName;
+                        }
+                    }
+                }
+            }
+
+            dayStart = dayEnd;
+        }
+
+        // 블록 재배치 뒤에도 개발자 도구에 표시되는 후보가 실제 시간표와 맞도록 다시 만듭니다.
+        const diagnosticCounts = new Map(allocations.map((subject) => [
+            subject.id,
+            fixedSchedule.filter((item) => item.subjectId === subject.id).length
+        ]));
+        for (let index = 0; index < schedule.length; index++) {
+            const item = schedule[index];
+            item.candidates = allocations
+                .filter((subject) => subject.examDate > item.studyDate)
+                .map((subject) => {
+                    const assignedBefore = diagnosticCounts.get(subject.id);
+                    const eligibleSlots = slots.slice(index)
+                        .filter((slot) => slot.studyDate <= subject.examDate).length;
+                    const remaining = Math.max(0, subject.allocatedSlots - assignedBefore);
+                    return {
+                        subjectId: subject.id,
+                        subjectName: subject.name,
+                        assignedBefore,
+                        allocatedSlots: subject.allocatedSlots,
+                        progress: subject.allocatedSlots > 0 ? assignedBefore / subject.allocatedSlots : 1,
+                        urgency: eligibleSlots > 0 ? remaining / eligibleSlots : Infinity,
+                        priority: subject.priority
+                    };
+                })
+                .sort((a, b) =>
+                    b.urgency - a.urgency ||
+                    a.subjectName.localeCompare(b.subjectName) ||
+                    b.priority - a.priority
+                );
+            diagnosticCounts.set(item.subjectId, diagnosticCounts.get(item.subjectId) + 1);
         }
 
         const actualWeeklyCounts = new Map(allocations.map((subject) => [
