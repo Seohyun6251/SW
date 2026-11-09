@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>주간 학습 시간표</title>
-    <link rel="stylesheet" href="page-nav.css">
+    <link rel="stylesheet" href="common.css">
     <style>
         table {
             table-layout: fixed;
@@ -88,18 +88,11 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            background-color: rgb(253, 250, 250);
             padding: 30px 16px 0;
-            margin: 0;
         }
         .content {
-            width: min(700px, 100%);
             min-height: 300px;
             padding: 32px;
-            border-radius: 20px;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-            background-color: white;
-            box-sizing: border-box;
         }
         @media (max-width: 560px) {
             .content { padding: 12px; }
@@ -247,7 +240,7 @@
                 시작시간: `${item.startHour}:00`,
                 배정과목: item.subjectName,
                 배정전후보: (item.candidates || []).map((candidate) =>
-                    `${candidate.subjectName}: ${candidate.assignedBefore}/${candidate.allocatedSlots} (${(candidate.progress * 100).toFixed(1)}%), 남은비율 ${candidate.urgency.toFixed(2)}, 우선순위 ${candidate.priority.toFixed(2)}`
+                    `${candidate.subjectName}: 배정시간 ${candidate.allocatedSlots}, 남은비율 ${candidate.urgency.toFixed(2)}, 우선순위 ${candidate.priority.toFixed(2)}`
                 ).join(' | ')
             })));
             console.groupEnd();

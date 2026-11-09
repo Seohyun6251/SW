@@ -824,6 +824,14 @@ app.get('/api/schedule', async (req, res) => {
         }
 
         const savedSchedule = await getSavedWeekSchedule(req.session.userId, context.weekDates);
+        const candidateDetailsBySlot = new Map(result.schedule.map((item) => [
+            `${item.studyDate}_${item.startHour}`,
+            item.candidates || []
+        ]));
+        const scheduleWithCandidates = savedSchedule.map((item) => ({
+            ...item,
+            candidates: candidateDetailsBySlot.get(`${item.studyDate}_${item.startHour}`) || []
+        }));
 
         return res.json({
             weekDates: context.weekDates,
@@ -832,7 +840,7 @@ app.get('/api/schedule', async (req, res) => {
                 0
             ),
             allocations: result.allocations,
-            schedule: savedSchedule
+            schedule: scheduleWithCandidates
         });
     } catch (error) {
         console.error('시간표 생성 오류:', error.message);
