@@ -128,52 +128,9 @@ function hasPassed(slot, context) {
         (slot.studyDate === context.today && slot.startHour <= context.currentHour);
 }
 
-async function ensurePastScheduleSnapshot(userId, subjects, context) {
-    let savedSchedule = await getSavedWeekSchedule(userId, context.weekDates);
-    const savedKeys = new Set(savedSchedule.map((item) => `${item.studyDate}_${item.startHour}`));
-    const missingPastSlots = context.availableSlots.filter((slot) =>
-        hasPassed(slot, context) && !savedKeys.has(`${slot.studyDate}_${slot.startHour}`)
-    );
-    if (missingPastSlots.length === 0) return savedSchedule;
-
-    // 기존 버전은 주 전체를 한 번에 배치했으므로 같은 규칙으로 누락된 과거 칸을 복원합니다.
-    const schedulerSubjects = toSchedulerSubjects(subjects);
-    const reconstructed = scheduler.makeLegacySchedule(
-        schedulerSubjects,
-        context.availableSlots,
-        context.priorityDate
-    ).schedule.filter((item) =>
-        hasPassed(item, context) && !savedKeys.has(`${item.studyDate}_${item.startHour}`)
-    );
-
-    if (reconstructed.length > 0) {
-        const connection = await db.getConnection();
-        try {
-            await connection.beginTransaction();
-            const rows = reconstructed.map((item) => [
-                userId,
-                item.studyDate,
-                item.startHour,
-                item.subjectId,
-                item.subjectName
-            ]);
-            await connection.query(
-                `INSERT IGNORE INTO scheduled_study_slots
-                    (user_id, study_date, start_hour, subject_id, subject_name)
-                 VALUES ?`,
-                [rows]
-            );
-            await connection.commit();
-        } catch (error) {
-            await connection.rollback();
-            throw error;
-        } finally {
-            connection.release();
-        }
-        savedSchedule = await getSavedWeekSchedule(userId, context.weekDates);
-    }
-
-    return savedSchedule;
+async function getWeekScheduleSnapshot(userId, context) {
+    // 과거 칸은 DB에 실제로 저장된 배정만 사용합니다. 누락된 칸을 추측해 만들지 않습니다.
+    return getSavedWeekSchedule(userId, context.weekDates);
 }
 
 function getFixedSchedule(schedule, context) {
@@ -528,11 +485,7 @@ app.post('/api/schedule/complete-makeup', async (req, res) => {
         }
         const context = getScheduleContext(subjects, weeklySlots);
         const schedulerSubjects = toSchedulerSubjects(subjects);
-        const actualWeekSchedule = await ensurePastScheduleSnapshot(
-            req.session.userId,
-            subjects,
-            context
-        );
+        const actualWeekSchedule = await getWeekScheduleSnapshot(req.session.userId, context);
         const fixedSchedule = getFixedSchedule(actualWeekSchedule, context);
         const result = scheduler.completeMakeup(
             schedulerSubjects,
@@ -641,16 +594,21 @@ app.post('/api/schedule/replan', async (req, res) => {
     }
 
     const context = getScheduleContext(subjects, weeklySlots);
-    let schedulerSubjects = toSchedulerSubjects(subjects, { clearTemporaryBonus: true });
+    const allSchedulerSubjects = toSchedulerSubjects(subjects, { clearTemporaryBonus: true });
+    let schedulerSubjects = allSchedulerSubjects.filter((subject) => subject.examDate > context.today);
+    if (schedulerSubjects.length === 0) {
+        return res.status(400).json({ message: '시험일이 오늘이거나 지난 과목은 보충 입력할 수 없습니다.' });
+    }
+    if (normalizedRequests.some(({ subjectId }) =>
+        !schedulerSubjects.some((subject) => subject.id === subjectId)
+    )) {
+        return res.status(400).json({ message: '시험일이 오늘이거나 지난 과목은 보충 입력할 수 없습니다.' });
+    }
 
     try {
         const today = context.today;
         const slotCount = context.futureSlots.length;
-        const savedSchedule = await ensurePastScheduleSnapshot(
-            req.session.userId,
-            subjects,
-            context
-        );
+        const savedSchedule = await getWeekScheduleSnapshot(req.session.userId, context);
         const fixedSchedule = getFixedSchedule(savedSchedule, context);
         const baseline = scheduler.distributeFutureSlots(
             schedulerSubjects,
@@ -747,11 +705,12 @@ app.post('/api/schedule/replan', async (req, res) => {
         const connection = await db.getConnection();
         try {
             await connection.beginTransaction();
-            for (const subject of schedulerSubjects) {
+            for (const subject of allSchedulerSubjects) {
+                const activeSubject = schedulerSubjects.find((item) => item.id === subject.id);
                 await connection.execute(
                     `UPDATE subjects SET temporary_need_bonus = ?
                      WHERE id = ? AND user_id = ?`,
-                    [subject.temporaryNeedBonus, subject.id, req.session.userId]
+                    [activeSubject?.temporaryNeedBonus ?? 0, subject.id, req.session.userId]
                 );
             }
             await replaceFutureSchedule(
@@ -835,11 +794,7 @@ app.get('/api/schedule', async (req, res) => {
 
         const context = getScheduleContext(subjects, weeklySlots);
         const schedulerSubjects = toSchedulerSubjects(subjects);
-        const savedBeforeReplan = await ensurePastScheduleSnapshot(
-            req.session.userId,
-            subjects,
-            context
-        );
+        const savedBeforeReplan = await getWeekScheduleSnapshot(req.session.userId, context);
         const fixedSchedule = getFixedSchedule(savedBeforeReplan, context);
         const result = scheduler.makeSchedule(
             schedulerSubjects,

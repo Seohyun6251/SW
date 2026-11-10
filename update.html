@@ -71,6 +71,12 @@
             background-color: #333;
         }
 
+        button:disabled {
+            border-color: #aaa;
+            background-color: #aaa;
+            cursor: not-allowed;
+        }
+
         .form-buttons {
             display: flex;
             justify-content: center;
@@ -109,6 +115,7 @@
     <script>
         const subjectList = document.getElementById('subjectList');
         const replanForm = document.getElementById('replanForm');
+        const submitButton = replanForm.querySelector('button[type="submit"]');
 
         async function loadSubjects() {
             try {
@@ -120,11 +127,15 @@
                 }
 
                 subjectList.replaceChildren();
-                if (subjects.length === 0) {
+                const now = new Date();
+                const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                const activeSubjects = subjects.filter((subject) => subject.exam_date > today);
+                submitButton.disabled = activeSubjects.length === 0;
+                if (activeSubjects.length === 0) {
                     return;
                 }
 
-                for (const subject of subjects) {
+                for (const subject of activeSubjects) {
                     const row = document.createElement('div');
                     row.className = 'subject-row';
 

@@ -286,59 +286,6 @@
         return { subjects: completedSubjects, lostHours, hasPendingMakeup: true };
     }
 
-    function makeLegacySchedule(subjects, availableSlots, priorityDate) {
-        const slots = availableSlots.map((slot) => ({
-            studyDate: toDateKey(slot.studyDate, '공부'),
-            startHour: Number(slot.startHour)
-        })).sort((a, b) =>
-            a.studyDate.localeCompare(b.studyDate) || a.startHour - b.startHour
-        );
-        if (slots.length < subjects.length) {
-            throw new Error('기존 시간표를 복원할 수 있는 공부 가능 시간이 부족합니다.');
-        }
-
-        const allocations = distributeSlots(subjects, slots.length, priorityDate);
-        const assignedCount = new Map(allocations.map((subject) => [subject.id, 0]));
-        const remainingCount = new Map(allocations.map((subject) => [subject.id, subject.allocatedSlots]));
-        const schedule = [];
-
-        for (const slot of slots) {
-            const candidates = allocations
-                .filter((subject) =>
-                    remainingCount.get(subject.id) > 0 && subject.examDate > slot.studyDate
-                )
-                .sort((a, b) => {
-                    const aProgress = assignedCount.get(a.id) / a.allocatedSlots;
-                    const bProgress = assignedCount.get(b.id) / b.allocatedSlots;
-                    return aProgress - bProgress || b.priority - a.priority;
-                });
-            const chosen = candidates[0];
-            if (!chosen) {
-                // 시험일 당일 이후의 슬롯은 어떤 과목에도 배정하지 않습니다.
-                continue;
-            }
-
-            schedule.push({
-                studyDate: slot.studyDate,
-                startHour: slot.startHour,
-                subjectId: chosen.id,
-                subjectName: chosen.name,
-                candidates: candidates.map((subject) => ({
-                    subjectId: subject.id,
-                    subjectName: subject.name,
-                    assignedBefore: assignedCount.get(subject.id),
-                    allocatedSlots: subject.allocatedSlots,
-                    progress: assignedCount.get(subject.id) / subject.allocatedSlots,
-                    priority: subject.priority
-                }))
-            });
-            assignedCount.set(chosen.id, assignedCount.get(chosen.id) + 1);
-            remainingCount.set(chosen.id, remainingCount.get(chosen.id) - 1);
-        }
-
-        return { allocations, schedule };
-    }
-
     function makeSchedule(
         subjects,
         availableSlots,
@@ -403,7 +350,7 @@
                 )
                 .map((subject) => {
                     const eligibleSlots = slots.slice(slotIndex)
-                        .filter((candidateSlot) => candidateSlot.studyDate <= subject.examDate).length;
+                        .filter((candidateSlot) => candidateSlot.studyDate < subject.examDate).length;
                     return {
                         ...subject,
                         urgency: eligibleSlots > 0 ? remainingCount.get(subject.id) / eligibleSlots : Infinity
@@ -565,7 +512,7 @@
                 .map((subject) => {
                     const assignedBefore = diagnosticCounts.get(subject.id);
                     const eligibleSlots = slots.slice(index)
-                        .filter((slot) => slot.studyDate <= subject.examDate).length;
+                        .filter((slot) => slot.studyDate < subject.examDate).length;
                     const remaining = Math.max(0, subject.allocatedSlots - assignedBefore);
                     return {
                         subjectId: subject.id,
@@ -607,7 +554,6 @@
         distributeFutureSlots,
         findTemporaryNeedBonus,
         completeMakeup,
-        makeLegacySchedule,
         makeSchedule
     };
 });
