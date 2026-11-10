@@ -198,13 +198,13 @@
                 과목: subject.name,
                 중요도: subject.importance,
                 기본필요도: subject.studyNeed,
-                임시필요도보너스: subject.temporaryNeedBonus,
-                영구필요도보너스: subject.permanentNeedBonus,
+                // 임시보너스: subject.temporaryNeedBonus,
+                영구보너스: subject.permanentNeedBonus,
                 현재필요도: subject.currentNeed,
                 시험까지_일수: subject.daysUntilExam,
                 우선순위: subject.priority,
-                이번주목표시간: subject.weeklyTargetSlots ?? subject.allocatedSlots,
-                실제주간배정: subject.allocatedSlots
+                // 이번주목표시간: subject.weeklyTargetSlots ?? subject.allocatedSlots,
+                // 실제주간배정: subject.allocatedSlots
             })));
 
             const subjectCount = data.allocations.length;
@@ -225,23 +225,23 @@
                 const exactExtra = extraSlots * ratio;
                 return {
                     과목: subject.name,
-                    우선순위비율: ratio,
+                    // 우선순위비율: ratio,
                     추가시간_정확값: exactExtra,
-                    소수점버림후_기본시간포함: basePerSubject + Math.floor(exactExtra),
-                    소수점배분_주간목표시간: subject.weeklyTargetSlots ?? subject.allocatedSlots,
-                    지난시간_반영후_실제주간배정: subject.allocatedSlots
+                    기본시간추가: basePerSubject + Math.floor(exactExtra),
+                    소수점배분후: subject.weeklyTargetSlots ?? subject.allocatedSlots,
+                    // 지난시간_반영후_실제주간배정: subject.allocatedSlots
                 };
             }));
 
             console.log('시간표 배치 기준: 지난 배정량을 포함해 주간 목표를 계산하고, 남은 목표가 남은 시험 전 시간에 비해 큰 과목부터 연속 시간 블록으로 배치합니다.');
             console.table(data.schedule.map((item, index) => ({
-                순서: index + 1,
+                // 순서: index + 1,
                 공부일: item.studyDate,
                 시작시간: `${item.startHour}:00`,
                 배정과목: item.subjectName,
-                배정전후보: (item.candidates || []).map((candidate) =>
-                    `${candidate.subjectName}: 배정시간 ${candidate.allocatedSlots}, 남은비율 ${candidate.urgency.toFixed(2)}, 우선순위 ${candidate.priority.toFixed(2)}`
-                ).join(' | ')
+                // 배정전후보: (item.candidates || []).map((candidate) =>
+                    // `${candidate.subjectName}: 배정시간 ${candidate.allocatedSlots}, 남은비율 ${candidate.urgency.toFixed(2)}, 우선순위 ${candidate.priority.toFixed(2)}`
+                // ).join(' | ')
             })));
             console.groupEnd();
         }
