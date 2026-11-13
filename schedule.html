@@ -64,26 +64,6 @@
             margin-right: auto;
             margin-left: auto;
         }
-        .complete-button {
-            flex: 1;
-            min-width: 0;
-            height: 44px;
-            padding: 0 12px;
-            border: 1px solid black;
-            border-radius: 5px;
-            background-color: black;
-            color: white;
-            font-weight: bold;
-            cursor: pointer;
-            box-sizing: border-box;
-        }
-        .complete-button:hover:not(:disabled) { background-color: #333; }
-        .complete-button:disabled {
-            border-color: #aaa;
-            background-color: #aaa;
-            color: #eee;
-            cursor: not-allowed;
-        }
         body {
             display: flex;
             flex-direction: column;
@@ -113,14 +93,12 @@
         </table>
         <div class="schedule-actions">
             <a class="update-link" href="update.html">보충 필요 과목 입력</a>
-            <button id="completeMakeupButton" class="complete-button" type="button" disabled>보충 완료</button>
         </div>
     </main>
 
     <script>
         const weekdayHeader = document.getElementById('weekdayHeader');
         const scheduleBody = document.getElementById('scheduleBody');
-        const completeMakeupButton = document.getElementById('completeMakeupButton');
         const weekdayNames = ['월', '화', '수', '목', '금', '토', '일'];
 
         function hourKey(hour) {
@@ -128,10 +106,6 @@
         }
 
         function renderSchedule(data) {
-            completeMakeupButton.disabled = !data.allocations.some(
-                (subject) => Number(subject.temporaryNeedBonus) > 0
-            );
-
             for (let index = 0; index < data.weekDates.length; index++) {
                 const dateText = data.weekDates[index];
                 const [, month, day] = dateText.split('-').map(Number);
@@ -170,26 +144,6 @@
             }
 
         }
-
-        completeMakeupButton.addEventListener('click', async () => {
-            if (completeMakeupButton.disabled) return;
-
-            try {
-                const response = await fetch('/api/schedule/complete-makeup', {
-                    method: 'POST'
-                });
-                const result = await response.json();
-                if (!response.ok) {
-                    alert(result.message || '보충 완료 처리를 하지 못했습니다.');
-                    return;
-                }
-
-                window.location.reload();
-            } catch (error) {
-                alert('보충 완료 처리를 하지 못했습니다.');
-                console.error('보충 완료 요청 오류:', error);
-            }
-        });
 
         function logScheduleCalculations(data) {
             console.group('공부 시간표 알고리즘 계산');

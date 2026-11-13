@@ -241,51 +241,6 @@
         throw new Error(`${original.name} 과목의 추가 시간을 계산하지 못했습니다.`);
     }
 
-    function completeMakeup(subjects, totalSlots, priorityDate, actualSchedule) {
-        const hasPendingMakeup = subjects.some(
-            (subject) => Number(subject.temporaryNeedBonus || 0) > 0
-        );
-        if (!hasPendingMakeup) {
-            return { subjects, lostHours: [], hasPendingMakeup: false };
-        }
-
-        const trackedSlots = Array.isArray(actualSchedule) ? actualSchedule.length : totalSlots;
-        const currentCounts = new Map(subjects.map((subject) => [subject.id, 0]));
-        if (Array.isArray(actualSchedule)) {
-            for (const item of actualSchedule) {
-                if (currentCounts.has(item.subjectId)) {
-                    currentCounts.set(item.subjectId, currentCounts.get(item.subjectId) + 1);
-                }
-            }
-        } else {
-            for (const subject of distributeSlots(subjects, trackedSlots, priorityDate)) {
-                currentCounts.set(subject.id, subject.allocatedSlots);
-            }
-        }
-        const withoutTemporaryBonus = subjects.map((subject) => ({
-            ...subject,
-            temporaryNeedBonus: 0
-        }));
-        const baselineAllocations = distributeSlots(withoutTemporaryBonus, trackedSlots, priorityDate);
-        const lostHours = [];
-
-        const completedSubjects = withoutTemporaryBonus.map((subject) => {
-            const baseline = baselineAllocations.find((item) => item.id === subject.id);
-            const lost = Math.max(0, baseline.allocatedSlots - currentCounts.get(subject.id));
-
-            if (lost > 0) {
-                lostHours.push({ subjectId: subject.id, subjectName: subject.name, hours: lost });
-            }
-
-            return {
-                ...subject,
-                permanentNeedBonus: Number(subject.permanentNeedBonus || 0) + lost * 7
-            };
-        });
-
-        return { subjects: completedSubjects, lostHours, hasPendingMakeup: true };
-    }
-
     function makeSchedule(
         subjects,
         availableSlots,
@@ -553,7 +508,6 @@
         distributeSlots,
         distributeFutureSlots,
         findTemporaryNeedBonus,
-        completeMakeup,
         makeSchedule
     };
 });

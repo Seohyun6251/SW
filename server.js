@@ -133,6 +133,43 @@ async function getWeekScheduleSnapshot(userId, context) {
     return getSavedWeekSchedule(userId, context.weekDates);
 }
 
+async function applyPendingBonusesForNewWeek(userId, weekStart) {
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [pendingBonuses] = await connection.execute(
+            `SELECT subject_id, SUM(bonus_amount) AS bonus_amount
+             FROM pending_permanent_bonuses
+             WHERE user_id = ? AND source_week_start < ?
+             GROUP BY subject_id`,
+            [userId, weekStart]
+        );
+        for (const pending of pendingBonuses) {
+            await connection.execute(
+                `UPDATE subjects
+                 SET permanent_need_bonus = permanent_need_bonus + ?
+                 WHERE id = ? AND user_id = ?`,
+                [Number(pending.bonus_amount), Number(pending.subject_id), userId]
+            );
+        }
+        await connection.execute(
+            `DELETE FROM pending_permanent_bonuses
+             WHERE user_id = ? AND source_week_start < ?`,
+            [userId, weekStart]
+        );
+        await connection.execute(
+            'UPDATE subjects SET temporary_need_bonus = 0 WHERE user_id = ?',
+            [userId]
+        );
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    } finally {
+        connection.release();
+    }
+}
+
 function getFixedSchedule(schedule, context) {
     return schedule.filter((item) => hasPassed(item, context));
 }
@@ -458,89 +495,6 @@ app.delete('/api/subjects/:id', async (req, res) => {
     }
 });
 
-app.post('/api/schedule/complete-makeup', async (req, res) => {
-    if (!req.session.userId) {
-        return res.status(401).json({ message: '먼저 로그인해 주세요.' });
-    }
-
-    try {
-        let subjects;
-        let weeklySlots;
-        [subjects] = await db.execute(
-            `SELECT id, name,
-                    DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
-                    study_need, importance,
-                    temporary_need_bonus, permanent_need_bonus
-             FROM subjects WHERE user_id = ? ORDER BY exam_date`,
-            [req.session.userId]
-        );
-        [weeklySlots] = await db.execute(
-            `SELECT day_of_week, start_hour FROM study_slots
-             WHERE user_id = ?
-             ORDER BY FIELD(day_of_week, 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'), start_hour`,
-            [req.session.userId]
-        );
-        if (subjects.length === 0 || weeklySlots.length === 0) {
-            return res.status(400).json({ message: '과목과 공부 가능 시간을 먼저 등록해 주세요.' });
-        }
-        const context = getScheduleContext(subjects, weeklySlots);
-        const schedulerSubjects = toSchedulerSubjects(subjects);
-        const actualWeekSchedule = await getWeekScheduleSnapshot(req.session.userId, context);
-        const fixedSchedule = getFixedSchedule(actualWeekSchedule, context);
-        const result = scheduler.completeMakeup(
-            schedulerSubjects,
-            context.futureSlots.length,
-            context.priorityDate,
-            actualWeekSchedule
-        );
-        if (!result.hasPendingMakeup) {
-            return res.status(409).json({ message: '현재 보충이 필요한 과목이 없습니다.' });
-        }
-        const futureSchedule = scheduler.makeSchedule(
-            result.subjects,
-            context.futureSlots,
-            context.today,
-            fixedSchedule,
-            context.priorityDate,
-            context.availableSlots.length
-        ).schedule;
-
-        const connection = await db.getConnection();
-        try {
-            await connection.beginTransaction();
-            for (const subject of result.subjects) {
-                await connection.execute(
-                    `UPDATE subjects
-                     SET temporary_need_bonus = 0, permanent_need_bonus = ?
-                     WHERE id = ? AND user_id = ?`,
-                    [subject.permanentNeedBonus, subject.id, req.session.userId]
-                );
-            }
-            await replaceFutureSchedule(
-                connection,
-                req.session.userId,
-                context.today,
-                context.currentHour,
-                futureSchedule
-            );
-            await connection.commit();
-        } catch (error) {
-            await connection.rollback();
-            throw error;
-        } finally {
-            connection.release();
-        }
-
-        return res.json({
-            message: '임시 필요도를 되돌리고 시간 손해를 반영했습니다.',
-            lostHours: result.lostHours
-        });
-    } catch (error) {
-        console.error('보충 완료 처리 오류:', error.message);
-        return res.status(500).json({ message: error.message || '보충 완료 처리를 하지 못했습니다.' });
-    }
-});
-
 app.post('/api/schedule/replan', async (req, res) => {
     if (!req.session.userId) {
         return res.status(401).json({ message: '먼저 로그인해 주세요.' });
@@ -702,6 +656,16 @@ app.post('/api/schedule/replan', async (req, res) => {
             ).schedule
             : [];
 
+        const pendingBonusRows = baseline
+            .map((subject) => {
+                const updated = finalAllocations.find((item) => item.id === subject.id);
+                const lostHours = Math.max(0, subject.allocatedSlots - updated.allocatedSlots);
+                return lostHours > 0
+                    ? [req.session.userId, subject.id, context.weekDates[0], lostHours * 7]
+                    : null;
+            })
+            .filter(Boolean);
+
         const connection = await db.getConnection();
         try {
             await connection.beginTransaction();
@@ -711,6 +675,19 @@ app.post('/api/schedule/replan', async (req, res) => {
                     `UPDATE subjects SET temporary_need_bonus = ?
                      WHERE id = ? AND user_id = ?`,
                     [activeSubject?.temporaryNeedBonus ?? 0, subject.id, req.session.userId]
+                );
+            }
+            await connection.execute(
+                `DELETE FROM pending_permanent_bonuses
+                 WHERE user_id = ? AND source_week_start = ?`,
+                [req.session.userId, context.weekDates[0]]
+            );
+            if (pendingBonusRows.length > 0) {
+                await connection.query(
+                    `INSERT INTO pending_permanent_bonuses
+                        (user_id, subject_id, source_week_start, bonus_amount)
+                     VALUES ?`,
+                    [pendingBonusRows]
                 );
             }
             await replaceFutureSchedule(
@@ -766,7 +743,7 @@ app.get('/api/schedule', async (req, res) => {
     }
 
     try {
-        const [subjects] = await db.execute(
+        let [subjects] = await db.execute(
             `SELECT id, name,
                     DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
                     study_need, importance,
@@ -793,54 +770,97 @@ app.get('/api/schedule', async (req, res) => {
         }
 
         const context = getScheduleContext(subjects, weeklySlots);
-        const schedulerSubjects = toSchedulerSubjects(subjects);
-        const savedBeforeReplan = await getWeekScheduleSnapshot(req.session.userId, context);
-        const fixedSchedule = getFixedSchedule(savedBeforeReplan, context);
-        const result = scheduler.makeSchedule(
-            schedulerSubjects,
-            context.futureSlots,
-            context.today,
-            fixedSchedule,
-            context.priorityDate,
-            context.availableSlots.length
-        );
-
-        const connection = await db.getConnection();
-        try {
-            await connection.beginTransaction();
-            await replaceFutureSchedule(
-                connection,
-                req.session.userId,
-                context.today,
-                context.currentHour,
-                result.schedule
+        let savedBeforeReplan = await getWeekScheduleSnapshot(req.session.userId, context);
+        if (savedBeforeReplan.length === 0) {
+            const [existingSchedules] = await db.execute(
+                'SELECT 1 FROM scheduled_study_slots WHERE user_id = ? LIMIT 1',
+                [req.session.userId]
             );
-            await connection.commit();
-        } catch (error) {
-            await connection.rollback();
-            throw error;
-        } finally {
-            connection.release();
+            await applyPendingBonusesForNewWeek(req.session.userId, context.weekDates[0]);
+            [subjects] = await db.execute(
+                `SELECT id, name,
+                        DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
+                        study_need, importance,
+                        temporary_need_bonus, permanent_need_bonus
+                 FROM subjects WHERE user_id = ? ORDER BY exam_date`,
+                [req.session.userId]
+            );
+            savedBeforeReplan = await getWeekScheduleSnapshot(req.session.userId, context);
+            const schedulerSubjects = toSchedulerSubjects(subjects);
+            const fixedSchedule = getFixedSchedule(savedBeforeReplan, context);
+            const isFirstSchedule = existingSchedules.length === 0;
+            const slotsToGenerate = isFirstSchedule
+                ? context.futureSlots
+                : context.availableSlots;
+            const totalAllocationSlots = isFirstSchedule
+                ? context.futureSlots.length
+                : context.availableSlots.length;
+            const result = scheduler.makeSchedule(
+                schedulerSubjects,
+                slotsToGenerate,
+                context.today,
+                fixedSchedule,
+                context.priorityDate,
+                totalAllocationSlots
+            );
+
+            const connection = await db.getConnection();
+            try {
+                await connection.beginTransaction();
+                await replaceFutureSchedule(
+                    connection,
+                    req.session.userId,
+                    context.today,
+                    context.currentHour,
+                    result.schedule
+                );
+                await connection.commit();
+            } catch (error) {
+                await connection.rollback();
+                throw error;
+            } finally {
+                connection.release();
+            }
+
+            const savedSchedule = await getSavedWeekSchedule(req.session.userId, context.weekDates);
+            const candidateDetailsBySlot = new Map(result.schedule.map((item) => [
+                `${item.studyDate}_${item.startHour}`,
+                item.candidates || []
+            ]));
+            const scheduleWithCandidates = savedSchedule.map((item) => ({
+                ...item,
+                candidates: candidateDetailsBySlot.get(`${item.studyDate}_${item.startHour}`) || []
+            }));
+            return res.json({
+                weekDates: context.weekDates,
+                totalAvailableSlots: result.allocations.reduce((sum, subject) => sum + subject.allocatedSlots, 0),
+                allocations: result.allocations,
+                schedule: scheduleWithCandidates
+            });
         }
 
-        const savedSchedule = await getSavedWeekSchedule(req.session.userId, context.weekDates);
-        const candidateDetailsBySlot = new Map(result.schedule.map((item) => [
-            `${item.studyDate}_${item.startHour}`,
-            item.candidates || []
-        ]));
-        const scheduleWithCandidates = savedSchedule.map((item) => ({
-            ...item,
-            candidates: candidateDetailsBySlot.get(`${item.studyDate}_${item.startHour}`) || []
+        const schedulerSubjects = toSchedulerSubjects(subjects);
+        const allocations = scheduler.distributeSlots(
+            schedulerSubjects.filter((subject) => subject.examDate > context.today),
+            context.availableSlots.length,
+            context.priorityDate
+        );
+        const assignedCounts = new Map(allocations.map((subject) => [subject.id, 0]));
+        for (const item of savedBeforeReplan) {
+            if (assignedCounts.has(item.subjectId)) {
+                assignedCounts.set(item.subjectId, assignedCounts.get(item.subjectId) + 1);
+            }
+        }
+        const savedAllocations = allocations.map((subject) => ({
+            ...subject,
+            weeklyTargetSlots: subject.allocatedSlots,
+            allocatedSlots: assignedCounts.get(subject.id)
         }));
-
         return res.json({
             weekDates: context.weekDates,
-            totalAvailableSlots: result.allocations.reduce(
-                (sum, subject) => sum + subject.allocatedSlots,
-                0
-            ),
-            allocations: result.allocations,
-            schedule: scheduleWithCandidates
+            totalAvailableSlots: savedBeforeReplan.length,
+            allocations: savedAllocations,
+            schedule: savedBeforeReplan.map((item) => ({ ...item, candidates: [] }))
         });
     } catch (error) {
         console.error('시간표 생성 오류:', error.message);
