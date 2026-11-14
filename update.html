@@ -30,6 +30,13 @@
             margin-top: 28px;
         }
 
+        .form-note {
+            margin: 18px 0 0;
+            color: #555;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
         .subject-row {
             display: grid;
             grid-template-columns: 1fr minmax(120px, 180px);
@@ -104,6 +111,7 @@
     <main class="content">
         <h1>보충 시간 입력</h1>
         <form id="replanForm">
+            <p class="form-note">입력한 시간은 과목별로 저장돼요. 같은 과목을 다시 입력하면 그 과목의 값만 바뀌고, 0을 입력하면 해당 요청을 취소해요.</p>
             <section id="subjectList" class="subject-list"></section>
             <div class="form-buttons">
                 <button type="button" onclick="location.href='schedule.html'">이전</button>
@@ -119,14 +127,25 @@
 
         async function loadSubjects() {
             try {
-                const response = await fetch('/api/subjects');
-                const subjects = await response.json();
+                const [subjectsResponse, requestsResponse] = await Promise.all([
+                    fetch('/api/subjects'),
+                    fetch('/api/schedule/makeup-requests')
+                ]);
+                const subjects = await subjectsResponse.json();
+                const requests = await requestsResponse.json();
 
-                if (!response.ok) {
+                if (!subjectsResponse.ok) {
                     throw new Error(subjects.message || '과목을 불러오지 못했습니다.');
+                }
+                if (!requestsResponse.ok) {
+                    throw new Error(requests.message || '저장된 보충 시간을 불러오지 못했습니다.');
                 }
 
                 subjectList.replaceChildren();
+                const savedHours = new Map(requests.map((request) => [
+                    Number(request.subject_id),
+                    Number(request.requested_hours)
+                ]));
                 const now = new Date();
                 const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
                 const activeSubjects = subjects.filter((subject) => subject.exam_date > today);
@@ -148,6 +167,10 @@
                     input.step = '1';
                     input.min = '0';
                     input.id = `subject-${subject.id}`;
+                    input.placeholder = '시간';
+                    if (savedHours.has(Number(subject.id))) {
+                        input.value = savedHours.get(Number(subject.id));
+                    }
                     input.setAttribute('aria-label', `${subject.name} 보충할 시간`);
 
                     row.append(name, input);
@@ -160,11 +183,11 @@
 
         replanForm.addEventListener('submit', async (event) => {
             event.preventDefault();
+            if (!replanForm.reportValidity()) return;
             const requests = [...subjectList.querySelectorAll('input[type="number"]')]
-                .filter((input) => Number(input.value) > 0)
                 .map((input) => ({
                     subjectId: Number(input.id.replace('subject-', '')),
-                    hours: Number(input.value)
+                    hours: input.value === '' ? 0 : Number(input.value)
                 }));
 
             try {

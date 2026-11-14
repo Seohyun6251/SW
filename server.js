@@ -123,6 +123,59 @@ async function getSavedWeekSchedule(userId, weekDates) {
     }));
 }
 
+async function getWeeklyScheduleState(userId, weekStart) {
+    const [rows] = await db.execute(
+        `SELECT generation_type, allocation_slot_count, scheduled_slot_count,
+                needs_replan, makeup_requests
+         FROM weekly_schedule_state
+         WHERE user_id = ? AND week_start = ?`,
+        [userId, weekStart]
+    );
+    if (rows.length === 0) return null;
+    let makeupRequests = rows[0].makeup_requests;
+    if (typeof makeupRequests === 'string') {
+        makeupRequests = JSON.parse(makeupRequests);
+    }
+    return {
+        generationType: rows[0].generation_type,
+        allocationSlotCount: Number(rows[0].allocation_slot_count),
+        scheduledSlotCount: Number(rows[0].scheduled_slot_count),
+        needsReplan: Number(rows[0].needs_replan) === 1,
+        makeupRequests: Array.isArray(makeupRequests) ? makeupRequests : []
+    };
+}
+
+async function saveWeeklyScheduleState(
+    connection,
+    userId,
+    weekStart,
+    generationType,
+    allocationSlotCount,
+    scheduledSlotCount,
+    makeupRequests = null
+) {
+    await connection.execute(
+        `INSERT INTO weekly_schedule_state
+            (user_id, week_start, generation_type, allocation_slot_count,
+             scheduled_slot_count, needs_replan, makeup_requests)
+         VALUES (?, ?, ?, ?, ?, 0, ?)
+         ON DUPLICATE KEY UPDATE
+            generation_type = VALUES(generation_type),
+            allocation_slot_count = VALUES(allocation_slot_count),
+            scheduled_slot_count = VALUES(scheduled_slot_count),
+            makeup_requests = COALESCE(VALUES(makeup_requests), weekly_schedule_state.makeup_requests),
+            needs_replan = 0`,
+        [
+            userId,
+            weekStart,
+            generationType,
+            allocationSlotCount,
+            scheduledSlotCount,
+            makeupRequests === null ? null : JSON.stringify(makeupRequests)
+        ]
+    );
+}
+
 function hasPassed(slot, context) {
     return slot.studyDate < context.today ||
         (slot.studyDate === context.today && slot.startHour <= context.currentHour);
@@ -160,6 +213,12 @@ async function applyPendingBonusesForNewWeek(userId, weekStart) {
         await connection.execute(
             'UPDATE subjects SET temporary_need_bonus = 0 WHERE user_id = ?',
             [userId]
+        );
+        await connection.execute(
+            `UPDATE weekly_schedule_state
+             SET makeup_requests = NULL
+             WHERE user_id = ? AND week_start < ?`,
+            [userId, weekStart]
         );
         await connection.commit();
     } catch (error) {
@@ -409,6 +468,14 @@ app.post('/api/study-slots', async (req, res) => {
             [rows]
         );
 
+        const currentWeekStart = getCurrentWeekDates(new Date())[0];
+        await connection.execute(
+            `UPDATE weekly_schedule_state
+             SET needs_replan = 1
+             WHERE user_id = ? AND week_start >= ?`,
+            [req.session.userId, currentWeekStart]
+        );
+
         await connection.commit();
 
         return res.json({
@@ -495,14 +562,40 @@ app.delete('/api/subjects/:id', async (req, res) => {
     }
 });
 
+app.get('/api/schedule/makeup-requests', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({ message: '먼저 로그인해 주세요.' });
+    }
+
+    try {
+        const weekStart = getCurrentWeekDates(new Date())[0];
+        const [requests] = await db.execute(
+            `SELECT makeup_requests
+             FROM weekly_schedule_state
+             WHERE user_id = ? AND week_start = ?`,
+            [req.session.userId, weekStart]
+        );
+        if (requests.length === 0 || requests[0].makeup_requests === null) {
+            return res.json([]);
+        }
+        const savedRequests = typeof requests[0].makeup_requests === 'string'
+            ? JSON.parse(requests[0].makeup_requests)
+            : requests[0].makeup_requests;
+        return res.json(Array.isArray(savedRequests) ? savedRequests : []);
+    } catch (error) {
+        console.error('이번 주 보충 요청 조회 오류:', error.message);
+        return res.status(500).json({ message: '저장된 보충 시간을 불러오지 못했습니다.' });
+    }
+});
+
 app.post('/api/schedule/replan', async (req, res) => {
     if (!req.session.userId) {
         return res.status(401).json({ message: '먼저 로그인해 주세요.' });
     }
 
     const requests = req.body.requests;
-    if (!Array.isArray(requests) || requests.length === 0) {
-        return res.status(400).json({ message: '보충할 과목과 시간을 입력해 주세요.' });
+    if (!Array.isArray(requests)) {
+        return res.status(400).json({ message: '보충 시간 입력 형식이 올바르지 않습니다.' });
     }
 
     const normalizedRequests = requests.map((request) => ({
@@ -510,9 +603,9 @@ app.post('/api/schedule/replan', async (req, res) => {
         hours: Number(request.hours)
     }));
     if (normalizedRequests.some(({ subjectId, hours }) =>
-        !Number.isInteger(subjectId) || subjectId < 1 || !Number.isInteger(hours) || hours < 1
+        !Number.isInteger(subjectId) || subjectId < 1 || !Number.isInteger(hours) || hours < 0
     )) {
-        return res.status(400).json({ message: '과목과 보충 시간은 올바른 정수여야 합니다.' });
+        return res.status(400).json({ message: '과목과 보충 시간은 0 이상의 정수여야 합니다.' });
     }
     if (new Set(normalizedRequests.map(({ subjectId }) => subjectId)).size !== normalizedRequests.length) {
         return res.status(400).json({ message: '같은 과목을 중복 입력했습니다.' });
@@ -549,6 +642,16 @@ app.post('/api/schedule/replan', async (req, res) => {
 
     const context = getScheduleContext(subjects, weeklySlots);
     const allSchedulerSubjects = toSchedulerSubjects(subjects, { clearTemporaryBonus: true });
+    let savedWeekState;
+    try {
+        savedWeekState = await getWeeklyScheduleState(
+            req.session.userId,
+            context.weekDates[0]
+        );
+    } catch (error) {
+        console.error('주간 시간표 상태 조회 오류:', error.message);
+        return res.status(500).json({ message: '시간표 상태를 확인하지 못했습니다.' });
+    }
     let schedulerSubjects = allSchedulerSubjects.filter((subject) => subject.examDate > context.today);
     if (schedulerSubjects.length === 0) {
         return res.status(400).json({ message: '시험일이 오늘이거나 지난 과목은 보충 입력할 수 없습니다.' });
@@ -558,20 +661,37 @@ app.post('/api/schedule/replan', async (req, res) => {
     )) {
         return res.status(400).json({ message: '시험일이 오늘이거나 지난 과목은 보충 입력할 수 없습니다.' });
     }
+    const activeRequests = normalizedRequests.filter((request) => request.hours > 0);
 
     try {
         const today = context.today;
         const slotCount = context.futureSlots.length;
         const savedSchedule = await getWeekScheduleSnapshot(req.session.userId, context);
         const fixedSchedule = getFixedSchedule(savedSchedule, context);
+        let generationType = savedWeekState?.generationType;
+        let allocationSlotCount = savedWeekState?.allocationSlotCount;
+        if (!savedWeekState) {
+            const [existingSchedules] = await db.execute(
+                'SELECT 1 FROM scheduled_study_slots WHERE user_id = ? LIMIT 1',
+                [req.session.userId]
+            );
+            generationType = existingSchedules.length === 0 ? 'initial' : 'regular';
+            allocationSlotCount = generationType === 'initial'
+                ? context.futureSlots.length
+                : context.availableSlots.length;
+        } else if (savedWeekState.needsReplan) {
+            allocationSlotCount = generationType === 'initial'
+                ? fixedSchedule.length + context.futureSlots.length
+                : context.availableSlots.length;
+        }
         const baseline = scheduler.distributeFutureSlots(
             schedulerSubjects,
             slotCount,
             context.priorityDate,
             fixedSchedule,
-            context.availableSlots.length
+            allocationSlotCount
         );
-        const goals = new Map(normalizedRequests.map((request) => {
+        const goals = new Map(activeRequests.map((request) => {
             const current = baseline.find((subject) => subject.id === request.subjectId);
             return [request.subjectId, current.allocatedSlots + request.hours];
         }));
@@ -589,9 +709,9 @@ app.post('/api/schedule/replan', async (req, res) => {
                 slotCount,
                 context.priorityDate,
                 fixedSchedule,
-                context.availableSlots.length
+                allocationSlotCount
             );
-            const pending = normalizedRequests.filter((request) => {
+            const pending = activeRequests.filter((request) => {
                 const allocated = allocations.find((subject) => subject.id === request.subjectId).allocatedSlots;
                 return allocated < goals.get(request.subjectId);
             });
@@ -603,7 +723,7 @@ app.post('/api/schedule/replan', async (req, res) => {
                     slotCount,
                     context.priorityDate,
                     fixedSchedule,
-                    context.availableSlots.length
+                    allocationSlotCount
                 )
                     .find((subject) => subject.id === request.subjectId);
                 const needed = goals.get(request.subjectId) - current.allocatedSlots;
@@ -614,7 +734,7 @@ app.post('/api/schedule/replan', async (req, res) => {
                     request.subjectId,
                     needed,
                     fixedSchedule,
-                    context.availableSlots.length
+                    allocationSlotCount
                 );
                 schedulerSubjects = result.subjects;
                 attempts++;
@@ -627,15 +747,15 @@ app.post('/api/schedule/replan', async (req, res) => {
             slotCount,
             context.priorityDate,
             fixedSchedule,
-            context.availableSlots.length
+            allocationSlotCount
         );
-        if (normalizedRequests.some((request) =>
+        if (activeRequests.some((request) =>
             finalAllocations.find((subject) => subject.id === request.subjectId).allocatedSlots < goals.get(request.subjectId)
         )) {
             throw new Error('입력한 보충 시간을 모두 반영할 우선순위를 계산하지 못했습니다. 과목을 나누어 시간표를 조정해 주세요.');
         }
 
-        const changes = normalizedRequests.map((request) => {
+        const changes = activeRequests.map((request) => {
             const current = schedulerSubjects.find((subject) => subject.id === request.subjectId);
             return {
                 subjectName: current.name,
@@ -652,7 +772,7 @@ app.post('/api/schedule/replan', async (req, res) => {
                 today,
                 fixedSchedule,
                 context.priorityDate,
-                context.availableSlots.length
+                allocationSlotCount
             ).schedule
             : [];
 
@@ -696,6 +816,18 @@ app.post('/api/schedule/replan', async (req, res) => {
                 context.today,
                 context.currentHour,
                 futureSchedule
+            );
+            await saveWeeklyScheduleState(
+                connection,
+                req.session.userId,
+                context.weekDates[0],
+                generationType,
+                allocationSlotCount,
+                fixedSchedule.length + futureSchedule.length,
+                activeRequests.map((request) => ({
+                    subject_id: request.subjectId,
+                    requested_hours: request.hours
+                }))
             );
             await connection.commit();
         } catch (error) {
@@ -770,38 +902,68 @@ app.get('/api/schedule', async (req, res) => {
         }
 
         const context = getScheduleContext(subjects, weeklySlots);
-        let savedBeforeReplan = await getWeekScheduleSnapshot(req.session.userId, context);
-        if (savedBeforeReplan.length === 0) {
-            const [existingSchedules] = await db.execute(
-                'SELECT 1 FROM scheduled_study_slots WHERE user_id = ? LIMIT 1',
-                [req.session.userId]
-            );
-            await applyPendingBonusesForNewWeek(req.session.userId, context.weekDates[0]);
-            [subjects] = await db.execute(
-                `SELECT id, name,
-                        DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
-                        study_need, importance,
-                        temporary_need_bonus, permanent_need_bonus
-                 FROM subjects WHERE user_id = ? ORDER BY exam_date`,
-                [req.session.userId]
-            );
-            savedBeforeReplan = await getWeekScheduleSnapshot(req.session.userId, context);
-            const schedulerSubjects = toSchedulerSubjects(subjects);
-            const fixedSchedule = getFixedSchedule(savedBeforeReplan, context);
-            const isFirstSchedule = existingSchedules.length === 0;
-            const slotsToGenerate = isFirstSchedule
-                ? context.futureSlots
-                : context.availableSlots;
-            const totalAllocationSlots = isFirstSchedule
-                ? context.futureSlots.length
-                : context.availableSlots.length;
+        let savedSchedule = await getWeekScheduleSnapshot(req.session.userId, context);
+        let weekState = await getWeeklyScheduleState(req.session.userId, context.weekDates[0]);
+
+        const snapshotCountMismatch = weekState &&
+            savedSchedule.length !== weekState.scheduledSlotCount;
+        if (!weekState || weekState.needsReplan || snapshotCountMismatch) {
+            const isLegacySnapshot = !weekState && savedSchedule.length > 0;
+            let generationType = weekState?.generationType;
+            let allocationSlotCount = weekState?.allocationSlotCount;
+            let fixedSchedule = getFixedSchedule(savedSchedule, context);
+            let slotsToGenerate;
+
+            if (weekState) {
+                // 입력 변경 후에도 지나간 배정은 고정하고 앞으로 가능한 칸만 다시 만듭니다.
+                allocationSlotCount = generationType === 'initial'
+                    ? fixedSchedule.length + context.futureSlots.length
+                    : context.availableSlots.length;
+                slotsToGenerate = context.futureSlots;
+            } else if (isLegacySnapshot) {
+                // 상태표를 도입하기 전에 저장된 시간표는 과거 배정을 보존하고 남은 칸을 보완합니다.
+                const [earlierSchedules] = await db.execute(
+                    `SELECT 1 FROM scheduled_study_slots
+                     WHERE user_id = ? AND study_date < ? LIMIT 1`,
+                    [req.session.userId, context.weekDates[0]]
+                );
+                generationType = earlierSchedules.length === 0 ? 'initial' : 'regular';
+                allocationSlotCount = generationType === 'initial'
+                    ? Math.max(fixedSchedule.length + context.futureSlots.length, savedSchedule.length)
+                    : context.availableSlots.length;
+                slotsToGenerate = context.futureSlots;
+            } else {
+                const [existingSchedules] = await db.execute(
+                    'SELECT 1 FROM scheduled_study_slots WHERE user_id = ? LIMIT 1',
+                    [req.session.userId]
+                );
+                generationType = existingSchedules.length === 0 ? 'initial' : 'regular';
+                await applyPendingBonusesForNewWeek(req.session.userId, context.weekDates[0]);
+                [subjects] = await db.execute(
+                    `SELECT id, name,
+                            DATE_FORMAT(exam_date, '%Y-%m-%d') AS exam_date,
+                            study_need, importance,
+                            temporary_need_bonus, permanent_need_bonus
+                     FROM subjects WHERE user_id = ? ORDER BY exam_date`,
+                    [req.session.userId]
+                );
+                savedSchedule = await getWeekScheduleSnapshot(req.session.userId, context);
+                fixedSchedule = getFixedSchedule(savedSchedule, context);
+                slotsToGenerate = generationType === 'initial'
+                    ? context.futureSlots
+                    : context.availableSlots;
+                allocationSlotCount = generationType === 'initial'
+                    ? context.futureSlots.length
+                    : context.availableSlots.length;
+            }
+
             const result = scheduler.makeSchedule(
-                schedulerSubjects,
+                toSchedulerSubjects(subjects),
                 slotsToGenerate,
                 context.today,
                 fixedSchedule,
                 context.priorityDate,
-                totalAllocationSlots
+                allocationSlotCount
             );
 
             const connection = await db.getConnection();
@@ -814,6 +976,14 @@ app.get('/api/schedule', async (req, res) => {
                     context.currentHour,
                     result.schedule
                 );
+                await saveWeeklyScheduleState(
+                    connection,
+                    req.session.userId,
+                    context.weekDates[0],
+                    generationType,
+                    allocationSlotCount,
+                    fixedSchedule.length + result.schedule.length
+                );
                 await connection.commit();
             } catch (error) {
                 await connection.rollback();
@@ -822,31 +992,34 @@ app.get('/api/schedule', async (req, res) => {
                 connection.release();
             }
 
-            const savedSchedule = await getSavedWeekSchedule(req.session.userId, context.weekDates);
+            savedSchedule = await getSavedWeekSchedule(req.session.userId, context.weekDates);
             const candidateDetailsBySlot = new Map(result.schedule.map((item) => [
                 `${item.studyDate}_${item.startHour}`,
                 item.candidates || []
             ]));
-            const scheduleWithCandidates = savedSchedule.map((item) => ({
-                ...item,
-                candidates: candidateDetailsBySlot.get(`${item.studyDate}_${item.startHour}`) || []
-            }));
             return res.json({
                 weekDates: context.weekDates,
-                totalAvailableSlots: result.allocations.reduce((sum, subject) => sum + subject.allocatedSlots, 0),
+                allocationSlotCount,
+                scheduledSlotCount: savedSchedule.length,
                 allocations: result.allocations,
-                schedule: scheduleWithCandidates
+                schedule: savedSchedule.map((item) => ({
+                    ...item,
+                    candidates: candidateDetailsBySlot.get(`${item.studyDate}_${item.startHour}`) || []
+                }))
             });
         }
 
-        const schedulerSubjects = toSchedulerSubjects(subjects);
-        const allocations = scheduler.distributeSlots(
-            schedulerSubjects.filter((subject) => subject.examDate > context.today),
-            context.availableSlots.length,
-            context.priorityDate
-        );
+        const schedulerSubjects = toSchedulerSubjects(subjects)
+            .filter((subject) => subject.examDate > context.today);
+        const allocations = schedulerSubjects.length === 0
+            ? []
+            : scheduler.distributeSlots(
+                schedulerSubjects,
+                weekState.allocationSlotCount,
+                context.priorityDate
+            );
         const assignedCounts = new Map(allocations.map((subject) => [subject.id, 0]));
-        for (const item of savedBeforeReplan) {
+        for (const item of savedSchedule) {
             if (assignedCounts.has(item.subjectId)) {
                 assignedCounts.set(item.subjectId, assignedCounts.get(item.subjectId) + 1);
             }
@@ -858,9 +1031,10 @@ app.get('/api/schedule', async (req, res) => {
         }));
         return res.json({
             weekDates: context.weekDates,
-            totalAvailableSlots: savedBeforeReplan.length,
+            allocationSlotCount: weekState.allocationSlotCount,
+            scheduledSlotCount: savedSchedule.length,
             allocations: savedAllocations,
-            schedule: savedBeforeReplan.map((item) => ({ ...item, candidates: [] }))
+            schedule: savedSchedule.map((item) => ({ ...item, candidates: [] }))
         });
     } catch (error) {
         console.error('시간표 생성 오류:', error.message);
