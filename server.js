@@ -8,7 +8,7 @@ const bcrypt = require('bcryptjs');   // 비밀번호 해시 도구 불러오기
 const express = require('express');
 const path = require('path');
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 app.use(express.json());
 app.use(session({
     secret: process.env.SESSION_SECRET,
