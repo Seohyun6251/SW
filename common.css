@@ -125,6 +125,52 @@ body {
     background: #f8fbfc;
 }
 
+.button-primary,
+.button-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.button-primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+}
+
+.button-primary:hover {
+    border-color: #23698e;
+    background: #23698e;
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+.button-secondary {
+    border-color: #c7dce7;
+    background: #edf6fa;
+    color: #24536c;
+}
+
+.button-secondary:hover {
+    border-color: #a8ccdd;
+    background: #e0f0f7;
+    color: #19445c;
+    transform: translateY(-1px);
+}
+
 .due-badge {
     display: inline-block;
     margin-left: 6px;
@@ -216,13 +262,15 @@ input:focus-visible {
 }
 
 .page-nav a {
-    background: #111;
+    border-color: var(--accent);
+    background: var(--accent);
     color: #fff;
 }
 
 .page-nav button {
-    background: #fff;
-    color: #111;
+    border-color: #c7dce7;
+    background: #edf6fa;
+    color: #24536c;
 }
 
 .page-nav a:hover,
@@ -231,11 +279,13 @@ input:focus-visible {
 }
 
 .page-nav a:hover {
-    background: #333;
+    border-color: #23698e;
+    background: #23698e;
 }
 
 .page-nav button:hover {
-    background: #f1f1f1;
+    border-color: #a8ccdd;
+    background: #e0f0f7;
 }
 
 @media (max-width: 560px) {
