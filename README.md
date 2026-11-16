@@ -29,3 +29,6 @@
 - Plan A: 과목별 학습시간을 실제 공부 가능 시간대에 배치하여 시간표 생성
 
 - +α: 웹 서비스를 모바일 앱으로 확장하고 실제 배포 진행 
+
+##
+웹 주소:https://port-0-scheduler-2026-mwhd52ju637f5289.sel3.cloudtype.app
