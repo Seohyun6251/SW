@@ -23,11 +23,21 @@
     });
 
     nav.append(home, logout);
+    document.body.classList.add('has-page-nav');
     document.body.append(nav);
 
     function placeBesideContent() {
         const panel = document.querySelector('.content');
         if (!panel) return;
+
+        if (window.matchMedia('(max-width: 560px)').matches) {
+            nav.style.position = 'static';
+            nav.style.left = '';
+            nav.style.top = '';
+            return;
+        }
+
+        nav.style.position = 'absolute';
 
         const panelRect = panel.getBoundingClientRect();
         const navWidth = nav.offsetWidth;

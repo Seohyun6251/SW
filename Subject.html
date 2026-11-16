@@ -72,7 +72,18 @@
 </head>
 <body>
     <main class="content">
-        <h2 style="text-align: center;">시험 과목 및 날짜 입력</h2>
+        <h1 class="page-title" style="text-align: center;">시험 과목 및 날짜 입력</h1>
+
+        <nav class="stepper" aria-label="시간표 생성 단계">
+            <div class="step-item is-active"><span class="step-number">1</span>과목 등록</div>
+            <div class="step-item"><span class="step-number">2</span>공부 시간</div>
+            <div class="step-item"><span class="step-number">3</span>시간표</div>
+        </nav>
+
+        <div class="summary-strip" aria-live="polite">
+            <span>등록한 과목</span>
+            <span><strong id="subjectCount">0</strong> 과목</span>
+        </div>
 
         <form id="subjectForm">
             <div class="input_d">
@@ -99,7 +110,7 @@
 
         <section class="subject-list">
             <h3>내가 등록한 과목</h3>
-            <table>
+            <table class="data-table">
                 <thead>
                     <tr>
                         <th>과목명</th>
@@ -117,6 +128,15 @@
     <script>
         const subjectForm = document.getElementById('subjectForm');
         const subjectList = document.getElementById('subjectList');
+        const subjectCount = document.getElementById('subjectCount');
+
+        function daysUntilExam(examDate) {
+            const [year, month, day] = examDate.split('-').map(Number);
+            const examDay = Date.UTC(year, month - 1, day);
+            const now = new Date();
+            const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+            return Math.round((examDay - today) / 86400000);
+        }
 
         async function deleteSubject(subjectId) {
             if (!confirm('이 과목을 삭제할까요?')) {
@@ -152,24 +172,36 @@
                     return;
                 }
 
+                subjectCount.textContent = String(subjects.length);
+
                 if (subjects.length === 0) {
                     return;
                 }
 
                 for (const subject of subjects) {
                     const row = document.createElement('tr');
-                    const values = [
-                        subject.name,
-                        subject.exam_date,
-                        subject.study_need,
-                        subject.importance
-                    ];
+                    const values = [subject.name, null, subject.study_need, subject.importance];
 
                     for (const value of values) {
                         const cell = document.createElement('td');
-                        cell.textContent = String(value);
+                        if (value !== null) cell.textContent = String(value);
                         row.appendChild(cell);
                     }
+
+                    const examCell = row.children[1];
+                    examCell.textContent = subject.exam_date;
+                    const remainingDays = daysUntilExam(subject.exam_date);
+                    const dueBadge = document.createElement('span');
+                    dueBadge.className = 'due-badge';
+                    dueBadge.textContent = remainingDays < 0
+                        ? '시험 지남'
+                        : remainingDays === 0
+                            ? 'D-Day'
+                            : `D-${remainingDays}`;
+                    if (remainingDays >= 0 && remainingDays <= 3) {
+                        dueBadge.classList.add('urgent');
+                    }
+                    examCell.appendChild(dueBadge);
 
                     const actionCell = document.createElement('td');
                     const deleteButton = document.createElement('button');

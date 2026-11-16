@@ -42,8 +42,16 @@
             grid-template-columns: 1fr minmax(120px, 180px);
             align-items: center;
             gap: 16px;
-            padding: 12px 0;
-            border-bottom: 1px solid #ccc;
+            padding: 12px;
+            border: 1px solid #e0e7eb;
+            border-radius: 12px;
+            background: #fbfdfe;
+            transition: border-color 140ms ease, box-shadow 140ms ease;
+        }
+
+        .subject-row:focus-within {
+            border-color: #82b9d3;
+            box-shadow: 0 0 0 3px rgba(43, 125, 168, 0.1);
         }
 
         .subject-name {
@@ -54,9 +62,14 @@
             width: 100%;
             height: 39px;
             padding: 8px;
-            border: solid 1px #888;
+            border: solid 1px #c7d1d7;
             border-radius: 5px;
             box-sizing: border-box;
+        }
+
+        input[type="number"]:focus {
+            outline: 2px solid rgba(43, 125, 168, 0.22);
+            border-color: #2b7da8;
         }
 
         button {
@@ -109,9 +122,13 @@
 
 <body>
     <main class="content">
-        <h1>보충 시간 입력</h1>
+        <h1 class="page-title">보충 시간 입력</h1>
         <form id="replanForm">
             <p class="form-note">입력한 시간은 과목별로 저장돼요. 같은 과목을 다시 입력하면 그 과목의 값만 바뀌고, 0을 입력하면 해당 요청을 취소해요.</p>
+            <div class="summary-strip" aria-live="polite">
+                <span>현재 입력한 보충 시간</span>
+                <span><strong id="totalMakeupHours">0</strong>시간</span>
+            </div>
             <section id="subjectList" class="subject-list"></section>
             <div class="form-buttons">
                 <button type="button" onclick="location.href='schedule.html'">이전</button>
@@ -124,6 +141,13 @@
         const subjectList = document.getElementById('subjectList');
         const replanForm = document.getElementById('replanForm');
         const submitButton = replanForm.querySelector('button[type="submit"]');
+        const totalMakeupHours = document.getElementById('totalMakeupHours');
+
+        function updateMakeupTotal() {
+            const total = [...subjectList.querySelectorAll('input[type="number"]')]
+                .reduce((sum, input) => sum + (input.value === '' ? 0 : Number(input.value)), 0);
+            totalMakeupHours.textContent = String(total);
+        }
 
         async function loadSubjects() {
             try {
@@ -172,10 +196,12 @@
                         input.value = savedHours.get(Number(subject.id));
                     }
                     input.setAttribute('aria-label', `${subject.name} 보충할 시간`);
+                    input.addEventListener('input', updateMakeupTotal);
 
                     row.append(name, input);
                     subjectList.appendChild(row);
                 }
+                updateMakeupTotal();
             } catch (error) {
                 alert(error.message || '과목을 불러오지 못했습니다.');
             }

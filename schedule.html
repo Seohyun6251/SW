@@ -18,6 +18,12 @@
             box-sizing: border-box;
             overflow: hidden;
             overflow-wrap: anywhere;
+            border: 1px solid #dce4e9;
+            text-align: center;
+        }
+        .schedule-table thead th {
+            background: #f3f7f9;
+            color: #43545e;
         }
         #weekdayHeader th:not(:first-child) {
             white-space: nowrap;
@@ -30,8 +36,7 @@
             font-weight: normal;
         }
         td.scheduled {
-            background-color: #dceeff;
-            text-align: center;
+            background-color: var(--subject-color, #dceeff);
             font-weight: bold;
         }
         .update-link {
@@ -82,8 +87,23 @@
 </head>
 <body>
     <main class="content">
-        <h1 style="text-align: center;">주간 학습 시간표</h1>
-        <table border="1">
+        <h1 class="page-title" style="text-align: center;">주간 학습 시간표</h1>
+
+        <nav class="stepper" aria-label="시간표 생성 단계">
+            <div class="step-item is-complete"><span class="step-number">1</span>과목 등록</div>
+            <div class="step-item is-complete"><span class="step-number">2</span>공부 시간</div>
+            <div class="step-item is-active"><span class="step-number">3</span>시간표</div>
+        </nav>
+
+        <section class="schedule-overview" aria-label="주간 배정 요약">
+            <div class="summary-strip">
+                <span>이번 주 배정 시간</span>
+                <span><strong id="scheduledHours">0</strong>시간</span>
+            </div>
+            <div id="subjectLegend" class="subject-legend" aria-label="과목별 배정 시간"></div>
+        </section>
+
+        <table class="schedule-table">
             <thead>
                 <tr id="weekdayHeader">
                     <th>시간/요일</th>
@@ -99,13 +119,43 @@
     <script>
         const weekdayHeader = document.getElementById('weekdayHeader');
         const scheduleBody = document.getElementById('scheduleBody');
+        const scheduledHours = document.getElementById('scheduledHours');
+        const subjectLegend = document.getElementById('subjectLegend');
         const weekdayNames = ['월', '화', '수', '목', '금', '토', '일'];
+        const subjectColors = [
+            '#dceeff', '#dff2e6', '#eee5fa', '#ffe9d8',
+            '#fff1c9', '#dff1f0', '#f8e1e7', '#e7eafc'
+        ];
 
         function hourKey(hour) {
             return String(hour).padStart(2, '0');
         }
 
         function renderSchedule(data) {
+            const colorBySubject = new Map();
+            const hoursBySubject = new Map();
+            data.allocations.forEach((subject, index) => {
+                colorBySubject.set(Number(subject.id), subjectColors[index % subjectColors.length]);
+                hoursBySubject.set(Number(subject.id), 0);
+            });
+            for (const item of data.schedule) {
+                const subjectId = Number(item.subjectId);
+                hoursBySubject.set(subjectId, (hoursBySubject.get(subjectId) || 0) + 1);
+            }
+            scheduledHours.textContent = String(data.scheduledSlotCount ?? data.schedule.length);
+            subjectLegend.replaceChildren();
+            data.allocations.forEach((subject, index) => {
+                const item = document.createElement('span');
+                item.className = 'legend-item';
+                const swatch = document.createElement('span');
+                swatch.className = 'legend-swatch';
+                swatch.style.setProperty('--subject-color', subjectColors[index % subjectColors.length]);
+                const label = document.createElement('span');
+                label.textContent = `${subject.name} ${hoursBySubject.get(Number(subject.id)) || 0}시간`;
+                item.append(swatch, label);
+                subjectLegend.appendChild(item);
+            });
+
             for (let index = 0; index < data.weekDates.length; index++) {
                 const dateText = data.weekDates[index];
                 const [, month, day] = dateText.split('-').map(Number);
@@ -139,6 +189,10 @@
 
                 if (cell) {
                     cell.textContent = item.subjectName;
+                    cell.style.setProperty(
+                        '--subject-color',
+                        colorBySubject.get(Number(item.subjectId)) || subjectColors[0]
+                    );
                     cell.classList.add('scheduled');
                 }
             }

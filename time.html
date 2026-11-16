@@ -14,6 +14,18 @@
             margin: auto;
         }
 
+        .availability-table th,
+        .availability-table td {
+            border: 1px solid #dce4e9;
+            text-align: center;
+        }
+
+        .availability-table thead th {
+            height: 42px;
+            background: #f3f7f9;
+            color: #43545e;
+        }
+
         th,
         td {
             height: 45px;
@@ -33,7 +45,8 @@
         }
 
         td.selected {
-            background-color: lightblue;
+            background-color: #bfe2f2;
+            box-shadow: inset 0 0 0 1px #8ec6df;
         }
 
         body {
@@ -80,9 +93,20 @@
 
 <body>
     <main class="content">
-        <h1 style="text-align: center;">학습 시간표 입력</h1>
+        <h1 class="page-title" style="text-align: center;">공부 가능 시간</h1>
 
-        <table border="1">
+        <nav class="stepper" aria-label="시간표 생성 단계">
+            <div class="step-item is-complete"><span class="step-number">1</span>과목 등록</div>
+            <div class="step-item is-active"><span class="step-number">2</span>공부 시간</div>
+            <div class="step-item"><span class="step-number">3</span>시간표</div>
+        </nav>
+
+        <div class="summary-strip" aria-live="polite">
+            <span>선택한 공부 가능 시간</span>
+            <span><strong id="selectedCount">0</strong>시간</span>
+        </div>
+
+        <table class="availability-table">
             <thead>
                 <tr>
                     <th>시간/요일</th>
@@ -120,10 +144,16 @@
 
     <script>
         const pos = {};
+        const selectedCount = document.getElementById('selectedCount');
         const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
         const timebody = document.getElementById('timebody');
         const start = 9;
         const end = 21; // 21시 시작 칸까지 있어 마지막 칸은 21~22시입니다.
+
+        function updateSelectedCount() {
+            selectedCount.textContent = String(Object.keys(pos).length);
+        }
+
         for (let hour = start; hour <= end; hour++) {
             const row = document.createElement('tr');
             const timeCell = document.createElement('td');
@@ -143,6 +173,7 @@
                         pos[cell.id] = true;
                         cell.classList.add('selected');
                     }
+                    updateSelectedCount();
                 });
 
                 row.appendChild(cell);
@@ -171,6 +202,8 @@
                         cell.classList.add('selected');
                     }
                 }
+
+                updateSelectedCount();
 
             } catch (error) {
                 alert('저장된 시간을 불러오지 못했습니다. 서버가 실행 중인지 확인해 주세요.');
