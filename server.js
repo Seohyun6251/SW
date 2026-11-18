@@ -1044,7 +1044,7 @@ app.get('/api/schedule', async (req, res) => {
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'sign_up.html'));
 });
-app.listen(PORT, () => {
+app.listen(PORT,'0.0.0.0', () => {
     console.log(`서버 실행 중: http://localhost:${PORT}`);
 });
 
