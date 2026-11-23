@@ -21,6 +21,7 @@
 - Backend: Node.js
 - Database: MySQL
 - Database Tool: MySQL Workbench 8.0
+- 배포: Cloudtype
 
 ## 개발 계획
 

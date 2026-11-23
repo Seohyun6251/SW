@@ -47,6 +47,36 @@
         return Date.UTC(year, month - 1, day);
     }
 
+    function getWeekdayIndex(dateKey) {
+        // JavaScript의 일요일 0 기준을 월요일 0 기준으로 바꿉니다.
+        return (new Date(dateKeyToUtc(dateKey)).getUTCDay() + 6) % 7;
+    }
+
+    function countRecurringSlotsBeforeExam(recurringSlots, startSlot, examDate) {
+        const startDate = toDateKey(startSlot.studyDate, '공부');
+        const endDate = toDateKey(examDate, '시험');
+        const startTime = dateKeyToUtc(startDate);
+        const endTime = dateKeyToUtc(endDate);
+        let count = 0;
+
+        for (let time = startTime; time < endTime; time += DAY_MS) {
+            const dateKey = new Date(time).toISOString().slice(0, 10);
+            const weekdayIndex = getWeekdayIndex(dateKey);
+
+            for (const recurringSlot of recurringSlots) {
+                if (recurringSlot.dayIndex !== weekdayIndex) continue;
+                if (dateKey === startDate && recurringSlot.startHour < startSlot.startHour) continue;
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    function getPreviousDateKey(dateKey) {
+        return new Date(dateKeyToUtc(dateKey) - DAY_MS).toISOString().slice(0, 10);
+    }
+
     function getDaysUntilExam(examDate, today) {
         const examKey = toDateKey(examDate, '시험');
         const todayKey = toDateKey(today, '오늘');
@@ -247,19 +277,14 @@
         today,
         fixedSchedule = [],
         priorityDate = today,
-        totalWeekSlotCount
+        totalWeekSlotCount,
+        recurringSlots = []
     ) {
         if (!Array.isArray(availableSlots)) {
             throw new Error('가능한 시간 칸 목록이 올바르지 않습니다.');
         }
         if (!Array.isArray(fixedSchedule)) {
             throw new Error('이미 지난 시간표가 올바르지 않습니다.');
-        }
-
-        // 시험일 당일과 그 이후에는 해당 과목을 새 시간표에서 제외합니다.
-        subjects = subjects.filter((subject) => toDateKey(subject.examDate, '시험') > toDateKey(today, '오늘'));
-        if (subjects.length === 0) {
-            return { allocations: [], schedule: [] };
         }
 
         const slots = availableSlots.map((slot) => {
@@ -274,6 +299,28 @@
         }).sort((a, b) =>
             a.studyDate.localeCompare(b.studyDate) || a.startHour - b.startHour
         );
+
+        const recurringSlotTemplate = recurringSlots
+            .map((slot) => ({
+                dayIndex: Number(slot.dayIndex),
+                startHour: Number(slot.startHour)
+            }))
+            .filter((slot) =>
+                Number.isInteger(slot.dayIndex) && slot.dayIndex >= 0 && slot.dayIndex <= 6 &&
+                Number.isInteger(slot.startHour) && slot.startHour >= 9 && slot.startHour <= 21
+            );
+
+        // 생성 대상 칸보다 시험이 먼저인 과목만 제외합니다.
+        // 정규 주차의 누락된 지난 칸을 채울 때도 그 당시 시험 전 과목을 배정할 수 있습니다.
+        const firstSlotDate = slots.length > 0
+            ? slots[0].studyDate
+            : toDateKey(today, '오늘');
+        subjects = subjects.filter((subject) =>
+            toDateKey(subject.examDate, '시험') > firstSlotDate
+        );
+        if (subjects.length === 0) {
+            return { allocations: [], schedule: [] };
+        }
 
         const slotKeys = slots.map(
             (slot) => `${slot.studyDate}_${slot.startHour}`
@@ -297,18 +344,64 @@
         ]));
         const schedule = [];
 
+        function getMondayExamReservation(slotIndex, candidates) {
+            const slot = slots[slotIndex];
+            const mondayExamCandidates = candidates.filter((subject) => {
+                const examDate = toDateKey(subject.examDate, '시험');
+                return getWeekdayIndex(examDate) === 0 &&
+                    slots.slice(slotIndex).some((candidateSlot) =>
+                        candidateSlot.studyDate === getPreviousDateKey(examDate)
+                    );
+            });
+            if (mondayExamCandidates.length === 0) return null;
+
+            const sundayDate = getPreviousDateKey(mondayExamCandidates[0].examDate);
+            const remainingSundaySlots = slots.slice(slotIndex)
+                .filter((candidateSlot) => candidateSlot.studyDate === sundayDate).length;
+            const remainingMondayDemand = mondayExamCandidates.reduce(
+                (sum, subject) => sum + remainingCount.get(subject.id),
+                0
+            );
+
+            if (slot.studyDate === sundayDate) {
+                return {
+                    mondayExamCandidates,
+                    candidates: mondayExamCandidates,
+                    maxBlockLength: Infinity
+                };
+            }
+
+            const hoursNeededBeforeSunday = remainingMondayDemand - remainingSundaySlots;
+            if (slot.studyDate < sundayDate && hoursNeededBeforeSunday > 0) {
+                return {
+                    mondayExamCandidates,
+                    candidates: mondayExamCandidates,
+                    maxBlockLength: hoursNeededBeforeSunday
+                };
+            }
+
+            return { mondayExamCandidates, candidates: [], maxBlockLength: 0 };
+        }
+
         function getCandidates(slotIndex) {
             const slot = slots[slotIndex];
-            return remainingAllocations
+            const eligible = remainingAllocations
                 .filter((subject) =>
                     remainingCount.get(subject.id) > 0 && subject.examDate > slot.studyDate
                 )
                 .map((subject) => {
-                    const eligibleSlots = slots.slice(slotIndex)
-                        .filter((candidateSlot) => candidateSlot.studyDate < subject.examDate).length;
+                    const eligibleSlots = recurringSlotTemplate.length > 0
+                        ? countRecurringSlotsBeforeExam(
+                            recurringSlotTemplate,
+                            slot,
+                            subject.examDate
+                        )
+                        : slots.slice(slotIndex)
+                            .filter((candidateSlot) => candidateSlot.studyDate < subject.examDate).length;
                     return {
                         ...subject,
-                        urgency: eligibleSlots > 0 ? remainingCount.get(subject.id) / eligibleSlots : Infinity
+                        urgency: eligibleSlots > 0 ? remainingCount.get(subject.id) / eligibleSlots : Infinity,
+                        eligibleSlots
                     };
                 })
                 .sort((a, b) =>
@@ -316,6 +409,29 @@
                     a.examDate.localeCompare(b.examDate) ||
                     b.priority - a.priority
                 );
+            const mondayReservation = getMondayExamReservation(slotIndex, eligible);
+            if (mondayReservation?.candidates.length > 0) {
+                return mondayReservation.candidates.map((subject) => ({
+                    ...subject,
+                    maxBlockLength: mondayReservation.maxBlockLength
+                }));
+            }
+
+            const nonReservedCandidates = mondayReservation
+                ? eligible.filter((subject) => !mondayReservation.mondayExamCandidates.includes(subject))
+                : eligible;
+            if (nonReservedCandidates.length > 0) return nonReservedCandidates;
+            if (eligible.length > 0) return eligible;
+
+            // 시험이 지난 과목에 남은 목표 칸은 더 배정할 수 없으므로,
+            // 현재 칸이 시험 전인 과목 중 우선순위가 높은 과목으로 넘깁니다.
+            return remainingAllocations
+                .filter((subject) => subject.examDate > slot.studyDate)
+                .sort((a, b) =>
+                    a.examDate.localeCompare(b.examDate) || b.priority - a.priority
+                )
+                .slice(0, 1)
+                .map((subject) => ({ ...subject, urgency: Infinity, overflow: true }));
         }
 
         let runStart = 0;
@@ -339,7 +455,12 @@
                     continue;
                 }
 
-                const blockLength = Math.min(remainingCount.get(chosen.id), runEnd - slotIndex);
+                if (chosen.overflow) remainingCount.set(chosen.id, 1);
+                const blockLength = Math.min(
+                    remainingCount.get(chosen.id),
+                    runEnd - slotIndex,
+                    chosen.maxBlockLength ?? Infinity
+                );
                 for (let offset = 0; offset < blockLength; offset++) {
                     const slot = slots[slotIndex];
                     const candidateSnapshot = getCandidates(slotIndex);
@@ -359,6 +480,7 @@
                                     ? before / subject.weeklyTargetSlots
                                     : 1,
                                 urgency: subject.urgency,
+                                eligibleSlots: subject.eligibleSlots,
                                 priority: subject.priority
                             };
                         })
@@ -466,8 +588,14 @@
                 .filter((subject) => subject.examDate > item.studyDate)
                 .map((subject) => {
                     const assignedBefore = diagnosticCounts.get(subject.id);
-                    const eligibleSlots = slots.slice(index)
-                        .filter((slot) => slot.studyDate < subject.examDate).length;
+                    const eligibleSlots = recurringSlotTemplate.length > 0
+                        ? countRecurringSlotsBeforeExam(
+                            recurringSlotTemplate,
+                            item,
+                            subject.examDate
+                        )
+                        : slots.slice(index)
+                            .filter((slot) => slot.studyDate < subject.examDate).length;
                     const remaining = Math.max(0, subject.allocatedSlots - assignedBefore);
                     return {
                         subjectId: subject.id,
@@ -476,6 +604,7 @@
                         allocatedSlots: subject.allocatedSlots,
                         progress: subject.allocatedSlots > 0 ? assignedBefore / subject.allocatedSlots : 1,
                         urgency: eligibleSlots > 0 ? remaining / eligibleSlots : Infinity,
+                        eligibleSlots,
                         priority: subject.priority
                     };
                 })

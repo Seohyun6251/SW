@@ -66,7 +66,11 @@ function getScheduleContext(subjects, weeklySlots, now = new Date()) {
         // 주간 배정 우선순위는 이번 주 안에서 월요일 기준으로 고정합니다.
         priorityDate: weekDates[0],
         availableSlots,
-        futureSlots
+        futureSlots,
+        recurringSlots: weeklySlots.map((slot) => ({
+            dayIndex: dayIndexes[slot.day_of_week],
+            startHour: Number(slot.start_hour)
+        }))
     };
 }
 
@@ -231,6 +235,39 @@ async function applyPendingBonusesForNewWeek(userId, weekStart) {
 
 function getFixedSchedule(schedule, context) {
     return schedule.filter((item) => hasPassed(item, context));
+}
+
+function getNextDateKey(dateKey) {
+    const [year, month, day] = dateKey.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    date.setDate(date.getDate() + 1);
+    return formatLocalDate(date);
+}
+
+function getProtectedSundaySchedule(schedule, subjects, context) {
+    const sunday = context.weekDates[6];
+    const nextMonday = getNextDateKey(sunday);
+    const mondayExamSubjectIds = new Set(subjects
+        .filter((subject) => subject.exam_date === nextMonday)
+        .map((subject) => Number(subject.id)));
+
+    return schedule.filter((item) =>
+        item.studyDate === sunday &&
+        !hasPassed(item, context) &&
+        mondayExamSubjectIds.has(item.subjectId)
+    );
+}
+
+function getMissingPastSlots(availableSlots, savedSchedule, subjects, context) {
+    const savedKeys = new Set(savedSchedule.map((item) =>
+        `${item.studyDate}_${item.startHour}`
+    ));
+
+    return availableSlots.filter((slot) =>
+        hasPassed(slot, context) &&
+        !savedKeys.has(`${slot.studyDate}_${slot.startHour}`) &&
+        subjects.some((subject) => subject.exam_date > slot.studyDate)
+    );
 }
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
@@ -665,9 +702,23 @@ app.post('/api/schedule/replan', async (req, res) => {
 
     try {
         const today = context.today;
-        const slotCount = context.futureSlots.length;
         const savedSchedule = await getWeekScheduleSnapshot(req.session.userId, context);
-        const fixedSchedule = getFixedSchedule(savedSchedule, context);
+        const protectedSundaySchedule = getProtectedSundaySchedule(
+            savedSchedule,
+            subjects,
+            context
+        );
+        const protectedSundayKeys = new Set(protectedSundaySchedule.map((item) =>
+            `${item.studyDate}_${item.startHour}`
+        ));
+        const replanSlots = context.futureSlots.filter((slot) =>
+            !protectedSundayKeys.has(`${slot.studyDate}_${slot.startHour}`)
+        );
+        const slotCount = replanSlots.length;
+        const fixedSchedule = [
+            ...getFixedSchedule(savedSchedule, context),
+            ...protectedSundaySchedule
+        ];
         let generationType = savedWeekState?.generationType;
         let allocationSlotCount = savedWeekState?.allocationSlotCount;
         if (!savedWeekState) {
@@ -681,7 +732,7 @@ app.post('/api/schedule/replan', async (req, res) => {
                 : context.availableSlots.length;
         } else if (savedWeekState.needsReplan) {
             allocationSlotCount = generationType === 'initial'
-                ? fixedSchedule.length + context.futureSlots.length
+                ? fixedSchedule.length + replanSlots.length
                 : context.availableSlots.length;
         }
         const baseline = scheduler.distributeFutureSlots(
@@ -768,11 +819,12 @@ app.post('/api/schedule/replan', async (req, res) => {
         const futureSchedule = slotCount > 0
             ? scheduler.makeSchedule(
                 schedulerSubjects,
-                context.futureSlots,
+                replanSlots,
                 today,
                 fixedSchedule,
                 context.priorityDate,
-                allocationSlotCount
+                allocationSlotCount,
+                context.recurringSlots
             ).schedule
             : [];
 
@@ -815,7 +867,7 @@ app.post('/api/schedule/replan', async (req, res) => {
                 req.session.userId,
                 context.today,
                 context.currentHour,
-                futureSchedule
+                [...protectedSundaySchedule, ...futureSchedule]
             );
             await saveWeeklyScheduleState(
                 connection,
@@ -904,10 +956,18 @@ app.get('/api/schedule', async (req, res) => {
         const context = getScheduleContext(subjects, weeklySlots);
         let savedSchedule = await getWeekScheduleSnapshot(req.session.userId, context);
         let weekState = await getWeeklyScheduleState(req.session.userId, context.weekDates[0]);
+        const missingPastSlots = getMissingPastSlots(
+            context.availableSlots,
+            savedSchedule,
+            subjects,
+            context
+        );
 
         const snapshotCountMismatch = weekState &&
             savedSchedule.length !== weekState.scheduledSlotCount;
-        if (!weekState || weekState.needsReplan || snapshotCountMismatch) {
+        const regularWeekNeedsPastBackfill = weekState?.generationType === 'regular' &&
+            missingPastSlots.length > 0;
+        if (!weekState || weekState.needsReplan || snapshotCountMismatch || regularWeekNeedsPastBackfill) {
             const isLegacySnapshot = !weekState && savedSchedule.length > 0;
             let generationType = weekState?.generationType;
             let allocationSlotCount = weekState?.allocationSlotCount;
@@ -919,7 +979,9 @@ app.get('/api/schedule', async (req, res) => {
                 allocationSlotCount = generationType === 'initial'
                     ? fixedSchedule.length + context.futureSlots.length
                     : context.availableSlots.length;
-                slotsToGenerate = context.futureSlots;
+                slotsToGenerate = generationType === 'regular'
+                    ? [...missingPastSlots, ...context.futureSlots]
+                    : context.futureSlots;
             } else if (isLegacySnapshot) {
                 // 상태표를 도입하기 전에 저장된 시간표는 과거 배정을 보존하고 남은 칸을 보완합니다.
                 const [earlierSchedules] = await db.execute(
@@ -931,7 +993,9 @@ app.get('/api/schedule', async (req, res) => {
                 allocationSlotCount = generationType === 'initial'
                     ? Math.max(fixedSchedule.length + context.futureSlots.length, savedSchedule.length)
                     : context.availableSlots.length;
-                slotsToGenerate = context.futureSlots;
+                slotsToGenerate = generationType === 'regular'
+                    ? [...missingPastSlots, ...context.futureSlots]
+                    : context.futureSlots;
             } else {
                 const [existingSchedules] = await db.execute(
                     'SELECT 1 FROM scheduled_study_slots WHERE user_id = ? LIMIT 1',
@@ -963,7 +1027,8 @@ app.get('/api/schedule', async (req, res) => {
                 context.today,
                 fixedSchedule,
                 context.priorityDate,
-                allocationSlotCount
+                allocationSlotCount,
+                context.recurringSlots
             );
 
             const connection = await db.getConnection();
